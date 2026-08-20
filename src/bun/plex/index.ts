@@ -16,6 +16,7 @@ export type {
 export { deleteConfig, loadConfig, saveConfig } from "./config.ts";
 export type { PlexConfig, PlexServerConfig } from "./config.ts";
 export {
+	accountImageUrl,
 	imageUrl,
 	streamUrl,
 	transcodedImageUrl,

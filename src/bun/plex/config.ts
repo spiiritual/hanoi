@@ -23,16 +23,16 @@ export interface PlexConfig {
 }
 
 const serverSchema = z.object({
-	name: z.string(),
-	url: z.string(),
-	token: z.string(),
+	name: z.string().min(1),
+	url: z.string().min(1),
+	token: z.string().min(1),
 });
 
 /** Persisted account profile — the app-domain shape written by getPlexAccount. */
 const accountSchema = z
 	.object({
-		username: z.string(),
-		email: z.string(),
+		username: z.string().min(1),
+		email: z.string().min(1),
 		thumb: z.string().optional(),
 		verified: z.boolean(),
 	})
@@ -40,8 +40,8 @@ const accountSchema = z
 
 /** Runtime shape of the persisted config; `loadConfig` validates against it. */
 export const plexConfigSchema = z.object({
-	clientIdentifier: z.string(),
-	token: z.string(),
+	clientIdentifier: z.string().min(1),
+	token: z.string().min(1),
 	account: accountSchema.optional(),
 	server: serverSchema.optional(),
 });

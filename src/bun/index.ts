@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { BrowserView, BrowserWindow } from "electrobun/main";
+import { BrowserView, BrowserWindow, Utils } from "electrobun/main";
 import type { PlexRpc } from "./plex/rpc-schema.ts";
-import { buildAuthUrl, createPin, waitForPin } from "./plex/auth.ts";
+import { buildAuthUrl, createPin, waitForPin, type PlexPin } from "./plex/auth.ts";
 import { deleteConfig, loadConfig, saveConfig, type PlexConfig } from "./plex/config.ts";
 import {
 	PlexClient,
@@ -10,11 +10,12 @@ import {
 	getPlexAccount,
 } from "./plex/client.ts";
 import {
+	accountImageUrl as buildAccountImageUrl,
 	imageUrl as buildImageUrl,
 	streamUrl as resolveStreamUrl,
 	transcodedImageUrl as buildTranscodedImageUrl,
 } from "./plex/url.ts";
-import type { PlexTrack } from "./plex/types.ts";
+import type { PlexAccount, PlexTrack } from "./plex/types.ts";
 
 let config = loadConfig();
 let client: PlexClient | null =
@@ -26,9 +27,25 @@ let client: PlexClient | null =
 			})
 		: null;
 
-/** True while a PIN is waiting for authorization (single auth flow at a time). */
-let authPending = false;
-let authAbort: AbortController | null = null;
+/** The active auth attempt; its id prevents an old cancelled attempt from
+ * clearing or overwriting a newer retry. */
+interface AuthAttempt {
+	id: number;
+	clientIdentifier: string;
+	abort: AbortController;
+}
+
+let nextAuthAttemptId = 0;
+let authAttempt: AuthAttempt | null = null;
+let authError: string | null = null;
+
+function isCurrentAuthAttempt(attempt: AuthAttempt): boolean {
+	return authAttempt?.id === attempt.id && !attempt.abort.signal.aborted;
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
 
 function requireClient(): PlexClient {
 	if (!client) throw new Error("Not connected to a Plex server");
@@ -36,38 +53,60 @@ function requireClient(): PlexClient {
 }
 
 async function beginAuth(): Promise<{ authUrl: string; pinCode: string }> {
-	if (authPending) throw new Error("An authorization flow is already in progress");
+	if (authAttempt) throw new Error("An authorization flow is already in progress");
 	const clientIdentifier = config?.clientIdentifier ?? randomUUID();
-	const pin = await createPin(clientIdentifier);
-	const abort = new AbortController();
-	authPending = true;
-	authAbort = abort;
+	const attempt: AuthAttempt = {
+		id: ++nextAuthAttemptId,
+		clientIdentifier,
+		abort: new AbortController(),
+	};
+	authAttempt = attempt;
+	authError = null;
+
+	let pin: PlexPin;
+	try {
+		pin = await createPin(clientIdentifier, "https://plex.tv", attempt.abort.signal);
+		if (!isCurrentAuthAttempt(attempt)) {
+			throw new DOMException("Aborted", "AbortError");
+		}
+	} catch (error) {
+		if (authAttempt?.id === attempt.id) authAttempt = null;
+		throw error;
+	}
 
 	// Background poll; resolves when the user authorizes at app.plex.tv.
 	void (async () => {
 		try {
 			const token = await waitForPin(pin, "https://plex.tv", {
-				signal: abort.signal,
+				signal: attempt.abort.signal,
 				onPoll: () => {
 					// The view shows the "Waiting for authorization…" spinner; nothing to push.
 				},
 			});
+			if (!isCurrentAuthAttempt(attempt)) return;
+
+			// Persist the token as soon as Plex approves the PIN. Account hydration
+			// is best-effort here; the renderer retries it before showing the
+			// connected screen, so a temporary /user failure cannot lose auth.
 			config = { clientIdentifier, token };
+			authError = null;
 			saveConfig(config);
-			// Warm the account profile for the Server Selection screen.
-			void getPlexAccount(token).then((account) => {
-				if (!config || config.token !== token) return;
-				config = { ...config, account };
-				saveConfig(config);
-			});
+			// The PIN attempt is complete once the token is persisted. Do not
+			// make the auth screen depend on the separate account request.
+			if (authAttempt?.id === attempt.id) authAttempt = null;
+			try {
+				await hydrateAccount(token);
+			} catch (error) {
+				console.error("Failed to hydrate Plex account after authorization:", error);
+			}
 		} catch (error) {
-			// Aborted (cancelAuth) or timed out: leave config untouched.
-			if ((error as Error)?.name !== "AbortError") {
+			// Aborted (cancelAuth) or a stale retry: leave config untouched.
+			if (isCurrentAuthAttempt(attempt) && (error as Error)?.name !== "AbortError") {
+				authError = errorMessage(error);
 				console.error("Plex auth failed:", error);
 			}
 		} finally {
-			authPending = false;
-			authAbort = null;
+			if (authAttempt?.id === attempt.id) authAttempt = null;
 		}
 	})();
 
@@ -75,9 +114,19 @@ async function beginAuth(): Promise<{ authUrl: string; pinCode: string }> {
 }
 
 function cancelAuth(): void {
-	authAbort?.abort();
-	authPending = false;
-	authAbort = null;
+	const attempt = authAttempt;
+	authAttempt = null;
+	authError = null;
+	attempt?.abort.abort();
+}
+
+async function hydrateAccount(token: string): Promise<PlexAccount> {
+	const account = await getPlexAccount(token);
+	if (config?.token === token) {
+		config = { ...config, account };
+		saveConfig(config);
+	}
+	return account;
 }
 
 async function selectServer(params: { clientIdentifier: string }): Promise<void> {
@@ -85,8 +134,12 @@ async function selectServer(params: { clientIdentifier: string }): Promise<void>
 	if (!cfg?.token) throw new Error("Not authenticated");
 	// Re-discover fresh each selection (the list is never persisted).
 	const servers = await discoverPlexServers(cfg.token, cfg.clientIdentifier);
+	if (config?.token !== cfg.token || config?.clientIdentifier !== cfg.clientIdentifier) {
+		throw new Error("Authentication state changed while loading servers");
+	}
 	const server = servers.find((s) => s.clientIdentifier === params.clientIdentifier);
 	if (!server) throw new Error(`Unknown server: ${params.clientIdentifier}`);
+	if (!server.url) throw new Error(`Server "${server.name}" has no usable connection`);
 	const next: PlexConfig = {
 		...cfg,
 		server: { name: server.name, url: server.url, token: server.token },
@@ -101,9 +154,7 @@ async function selectServer(params: { clientIdentifier: string }): Promise<void>
 }
 
 function disconnect(): void {
-	authAbort?.abort();
-	authPending = false;
-	authAbort = null;
+	cancelAuth();
 	client = null;
 	config = null;
 	deleteConfig();
@@ -145,6 +196,8 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 				return {
 					authenticated: Boolean(cfg?.token),
 					hasServer: Boolean(server),
+					authenticating: Boolean(authAttempt),
+					authError: authError ?? undefined,
 					account: cfg?.account,
 					server,
 				};
@@ -152,9 +205,16 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 			disconnect() {
 				disconnect();
 			},
-			getAccount() {
+			async getAccount() {
 				if (!config?.token) throw new Error("Not authenticated");
-				return getPlexAccount(config.token);
+				return hydrateAccount(config.token);
+			},
+			async getAccountAvatarUrl() {
+				const cfg = config;
+				if (!cfg?.token) return null;
+				const account = cfg.account?.thumb ? cfg.account : await hydrateAccount(cfg.token);
+				if (config?.token !== cfg.token) return null;
+				return buildAccountImageUrl(account.thumb, cfg.token);
 			},
 			async getServers() {
 				if (!config?.token) return [];
@@ -226,6 +286,12 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 			},
 			scrobble(params) {
 				return requireClient().scrobble(params.key);
+			},
+			openExternal(params) {
+				Utils.openExternal(params.url);
+			},
+			clipboardWriteText(params) {
+				Utils.clipboardWriteText(params.text);
 			},
 		},
 	},

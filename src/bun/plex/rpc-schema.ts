@@ -19,14 +19,14 @@ import type { BrowseOptions } from "./client.ts";
 
 /**
  * Server info as seen by the view — the per-server token never leaves the
- * main process, and `online`/`local` are excluded: they are network
- * properties measured at discovery time (`getServers`), not config facts,
- * so the startup `getAuthState` snapshot cannot truthfully claim them.
+ * main process. `local` and `online` are measured during discovery and are
+ * intentionally available to the server picker, but never persisted.
  */
 export type ServerViewSummary = Pick<
 	PlexServerInfo,
 	"name" | "clientIdentifier" | "url"
->;
+> &
+	Partial<Pick<PlexServerInfo, "local" | "online">>;
 
 export type PlexRpc = {
 	bun: {
@@ -40,6 +40,8 @@ export type PlexRpc = {
 				response: {
 					authenticated: boolean;
 					hasServer: boolean;
+					authenticating: boolean;
+					authError?: string;
 					account?: PlexAccount;
 					server?: ServerViewSummary;
 				};
@@ -47,6 +49,7 @@ export type PlexRpc = {
 			disconnect: { params: void; response: void };
 			// account + servers
 			getAccount: { params: void; response: PlexAccount };
+			getAccountAvatarUrl: { params: void; response: string | null };
 			getServers: { params: void; response: ServerViewSummary[] };
 			checkServerStatus: { params: void; response: boolean };
 			// browse
@@ -100,6 +103,9 @@ export type PlexRpc = {
 				response: string | null;
 			};
 			scrobble: { params: { key: string }; response: void };
+			// system helpers (main process only)
+			openExternal: { params: { url: string }; response: void };
+			clipboardWriteText: { params: { text: string }; response: void };
 		};
 		messages: {};
 	};

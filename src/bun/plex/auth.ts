@@ -40,6 +40,7 @@ const DEVICE_HEADERS = {
 export async function createPin(
 	clientIdentifier: string,
 	plexTvUrl: string = DEFAULT_PLEX_TV_URL,
+	signal?: AbortSignal,
 ): Promise<PlexPin> {
 	const res = await fetch(`${plexTvUrl}/api/v2/pins?strong=true`, {
 		method: "POST",
@@ -48,6 +49,7 @@ export async function createPin(
 			"X-Plex-Client-Identifier": clientIdentifier,
 			...DEVICE_HEADERS,
 		},
+		signal,
 	});
 	if (!res.ok) {
 		throw new Error(`Failed to create Plex PIN: ${res.status} ${res.statusText}`);
@@ -61,9 +63,12 @@ export async function createPin(
 
 /** Browser URL the user opens to authorize the app. */
 export function buildAuthUrl(pin: PlexPin): string {
-	const clientID = encodeURIComponent(pin.clientIdentifier);
-	const code = encodeURIComponent(pin.code);
-	return `https://app.plex.tv/auth#?clientID=${clientID}&code=${code}&context[device][product]=hanoi`;
+	const params = new URLSearchParams({
+		clientID: pin.clientIdentifier,
+		code: pin.code,
+		"context[device][product]": "hanoi",
+	});
+	return `https://app.plex.tv/auth#?${params.toString()}`;
 }
 
 export interface WaitForPinOptions {

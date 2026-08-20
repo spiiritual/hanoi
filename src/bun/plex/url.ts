@@ -30,6 +30,18 @@ export function imageUrl(
 	return withToken(`${source.baseUrl}${path}`, source.token);
 }
 
+/** Resolve a Plex.tv account avatar path and attach the account token. */
+export function accountImageUrl(
+	path: string | undefined | null,
+	token: string,
+): string | null {
+	if (!path) return null;
+	const url = /^https?:\/\//i.test(path)
+		? path
+		: `https://plex.tv${path.startsWith("/") ? path : `/${path}`}`;
+	return withToken(url, token);
+}
+
 /**
  * Transcode a Plex image path to a fixed-size image via `/photo/:/transcode`.
  * Fallback for thumbs the native decoder rejects (e.g. PNGs with a bare

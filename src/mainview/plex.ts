@@ -22,6 +22,7 @@ export const plex = {
 	disconnect: () => rpc.request.disconnect(),
 	// account + servers
 	getAccount: () => rpc.request.getAccount(),
+	getAccountAvatarUrl: () => rpc.request.getAccountAvatarUrl(),
 	getServers: () => rpc.request.getServers(),
 	checkServerStatus: () => rpc.request.checkServerStatus(),
 	// browse
@@ -48,4 +49,7 @@ export const plex = {
 	transcodedImageUrl: (path: string, width: number, height: number) =>
 		rpc.request.transcodedImageUrl({ path, width, height }),
 	scrobble: (key: string) => rpc.request.scrobble({ key }),
+	// system helpers
+	openExternal: (url: string) => rpc.request.openExternal({ url }),
+	clipboardWriteText: (text: string) => rpc.request.clipboardWriteText({ text }),
 };

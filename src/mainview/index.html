@@ -1,47 +1,151 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hello Electrobun!</title>
-    <link rel="stylesheet" href="index.css">
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Hanoi</title>
+	<link rel="stylesheet" href="index.css">
 </head>
 <body>
-    <div class="container">
-        <h1>Hello Electrobun! 🎉</h1>
-        <p class="subtitle">A fast, cross-platform desktop app framework</p>
-        
-        <div class="welcome-section">
-            <p>Welcome to your first Electrobun app! This framework combines the power of Bun with native desktop capabilities.</p>
-            
-            <h2>What is Electrobun?</h2>
-            <ul>
-                <li><strong>Fast:</strong> Built on Bun's lightning-fast JavaScript runtime</li>
-                <li><strong>Native:</strong> Access to system APIs like menus, trays, and file dialogs</li>
-                <li><strong>Cross-platform:</strong> Works on macOS, Windows, and Linux</li>
-                <li><strong>Web-based UI:</strong> Use familiar HTML, CSS, and JavaScript for your interface</li>
-            </ul>
-            
-            <h2>Get Started</h2>
-            <p>Ready to build something amazing? Check out the documentation and examples:</p>
-            
-            <div class="links">
-                <a href="https://electrobun.dev/" class="doc-link">
-                    📚 Electrobun
-                </a>
-                <a href="https://github.com/blackboardsh/electrobun" class="doc-link">
-                    🐙 GitHub Repository
-                </a>
-                <a href="https://framework.blackboard.sh/electrobun/apis/main/" class="doc-link">
-                    💡 Api Docs
-                </a>
-            </div>
-        </div>
+	<main id="app" class="app">
 
-        <div class="footer">
-            <p>Edit <code>src/bun/index.ts</code> and <code>src/mainview/</code> to customize your app</p>
-        </div>
-    </div>
-    <script src="index.js"></script>
+		<!-- 1. Welcome -->
+		<section class="screen" id="screen-welcome">
+			<div class="welcome-inner">
+				<div class="logo-mark">H</div>
+				<div class="spacer" style="height:12px"></div>
+				<h1 class="app-name">Hanoi</h1>
+				<div class="spacer" style="height:21px"></div>
+				<p class="tagline">A desktop music player for Plex.</p>
+				<div class="spacer" style="height:40px"></div>
+				<button class="btn-signin" id="btn-signin">
+					<span class="plex-icon">▶</span>
+					<span>Sign in with Plex</span>
+				</button>
+				<div class="spacer" style="height:16px"></div>
+				<a class="link-muted" href="#" id="btn-create">Don't have an account?  Create one</a>
+				<div class="spacer" style="height:64px"></div>
+			</div>
+		</section>
+
+		<!-- 2. OAuth link -->
+		<section class="screen is-hidden" id="screen-oauth">
+			<div class="auth-inner">
+				<h2 class="title">Link your Plex account</h2>
+				<div class="spacer" style="height:8px"></div>
+				<p class="subtitle">Secure OAuth — your Plex password never touches this app.</p>
+				<div class="spacer" style="height:36px"></div>
+
+				<div class="link-card">
+					<div class="card-label">Your link</div>
+					<div class="link-row">
+						<span class="link-prefix">plex.tv/link/</span>
+						<span class="code-value" id="link-code">A1B2C3</span>
+					</div>
+					<div class="card-actions">
+						<button class="btn-open" id="btn-open"><span class="open-icon">↗</span>Open in Browser</button>
+						<button class="btn-copy" id="btn-copy">Copy link</button>
+					</div>
+				</div>
+
+				<div class="spacer" style="height:28px"></div>
+
+				<div class="steps">
+					<div class="step">
+						<div class="step-num">1</div>
+						<div class="step-info">
+							<div class="step-title">Open the link</div>
+							<div class="step-desc">Tap Open in Browser or copy the link — sign in with your Plex account</div>
+						</div>
+					</div>
+					<div class="step">
+						<div class="step-num">2</div>
+						<div class="step-info">
+							<div class="step-title">Approve and you're connected</div>
+							<div class="step-desc">No code to type — this app finishes the handshake automatically</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="spacer" style="height:28px"></div>
+
+				<div class="status-row">
+					<div class="spinner"></div>
+					<div class="status-text" id="status-text">Waiting for authorization…</div>
+				</div>
+
+				<div class="spacer" style="height:20px"></div>
+
+				<button class="btn-cancel" id="btn-cancel">
+					<span class="cancel-icon">✕</span>
+					<span>Cancel</span>
+				</button>
+			</div>
+		</section>
+
+		<!-- 3. Connected -->
+		<section class="screen is-hidden" id="screen-connected">
+			<div class="auth-inner">
+				<div class="badge"><div class="badge-check">✓</div></div>
+				<div class="spacer" style="height:28px"></div>
+				<h2 class="title">You're signed in!</h2>
+				<div class="spacer" style="height:40px"></div>
+
+				<div class="account-card">
+					<div class="avatar" id="account-avatar">
+						<span id="account-initials">AR</span>
+						<img id="account-avatar-image" alt="" hidden>
+					</div>
+					<div class="card-info">
+						<div class="card-name" id="account-name">Alex Rivera</div>
+						<div class="card-sub" id="account-email">alex.rivera@gmail.com</div>
+					</div>
+				</div>
+
+				<div class="spacer" style="height:40px"></div>
+
+				<button class="btn-primary" id="btn-continue">Continue</button>
+			</div>
+		</section>
+
+		<!-- 4. Server selection -->
+		<section class="screen is-hidden" id="screen-servers">
+			<div class="auth-inner">
+				<h2 class="title">Choose your server</h2>
+				<div class="spacer" style="height:8px"></div>
+				<p class="subtitle">Select the Plex server that hosts your music library.</p>
+				<div class="spacer" style="height:36px"></div>
+
+				<div class="server-list" id="server-list">
+					<div class="server-loading" hidden>
+						<div class="spinner"></div>
+						<span>Loading your Plex servers…</span>
+					</div>
+				</div>
+
+				<div class="spacer" style="height:28px"></div>
+				<p class="server-error" id="server-error" hidden></p>
+
+				<p class="hint">Can't find your server?  <a href="#" id="btn-again">Sign in again</a></p>
+
+				<div class="spacer" style="height:28px"></div>
+
+				<button class="btn-primary" id="btn-start" disabled>Start listening</button>
+			</div>
+		</section>
+
+		<!-- 5. Post-auth placeholder (real Home/library UI not built yet) -->
+		<section class="screen is-hidden" id="screen-home">
+			<div class="auth-inner">
+				<div class="badge"><div class="badge-check">✓</div></div>
+				<div class="spacer" style="height:28px"></div>
+				<h2 class="title">Connected</h2>
+				<div class="spacer" style="height:12px"></div>
+				<p class="subtitle">Signed in as <span id="home-username">…</span> on <span id="home-server-name">…</span>. The main app UI comes next.</p>
+			</div>
+		</section>
+
+	</main>
+	<script src="index.js"></script>
 </body>
 </html>

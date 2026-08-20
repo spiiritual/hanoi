@@ -74,7 +74,9 @@ export function container<T>(
 
 export const pinSchema = z
 	.object({
-		id: z.string(),
+		// plex.tv returns `id` as a JSON number; coerce to string so the poll
+		// URL templating and the `PlexPin.id: string` type stay consistent.
+		id: z.coerce.string(),
 		code: z.string(),
 		clientIdentifier: z.string(),
 		expiresIn: z.number(),
