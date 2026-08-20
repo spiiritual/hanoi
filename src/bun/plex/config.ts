@@ -5,6 +5,8 @@ import { z } from "zod";
 import type { PlexAccount } from "./types.ts";
 
 export interface PlexServerConfig {
+	/** Plex resource identifier; optional for configs written before server switching. */
+	clientIdentifier?: string;
 	name: string;
 	/** Best connection URI (local connection preferred). */
 	url: string;
@@ -23,6 +25,8 @@ export interface PlexConfig {
 }
 
 const serverSchema = z.object({
+	// Optional keeps older persisted configs readable; new selections always write it.
+	clientIdentifier: z.string().min(1).optional(),
 	name: z.string().min(1),
 	url: z.string().min(1),
 	token: z.string().min(1),

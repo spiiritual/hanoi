@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { BrowserView, BrowserWindow, Utils } from "electrobun/main";
-import type { PlexRpc } from "./plex/rpc-schema.ts";
+import type { PlexRpc, ServerViewSummary } from "./plex/rpc-schema.ts";
 import { buildAuthUrl, createPin, waitForPin, type PlexPin } from "./plex/auth.ts";
 import { deleteConfig, loadConfig, saveConfig, type PlexConfig } from "./plex/config.ts";
 import {
@@ -9,6 +9,7 @@ import {
 	discoverPlexServers,
 	getPlexAccount,
 } from "./plex/client.ts";
+import { findPersistedServer } from "./plex/server-selection.ts";
 import {
 	accountImageUrl as buildAccountImageUrl,
 	imageUrl as buildImageUrl,
@@ -142,7 +143,12 @@ async function selectServer(params: { clientIdentifier: string }): Promise<void>
 	if (!server.url) throw new Error(`Server "${server.name}" has no usable connection`);
 	const next: PlexConfig = {
 		...cfg,
-		server: { name: server.name, url: server.url, token: server.token },
+		server: {
+			clientIdentifier: server.clientIdentifier,
+			name: server.name,
+			url: server.url,
+			token: server.token,
+		},
 	};
 	config = next;
 	saveConfig(next);
@@ -151,6 +157,47 @@ async function selectServer(params: { clientIdentifier: string }): Promise<void>
 		token: server.token,
 		clientIdentifier: cfg.clientIdentifier,
 	});
+}
+
+async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary | undefined> {
+	if (!cfg.server || !cfg.token) return undefined;
+
+	const fallback: ServerViewSummary = {
+		name: cfg.server.name,
+		clientIdentifier: cfg.server.clientIdentifier ?? cfg.clientIdentifier,
+		url: cfg.server.url,
+	};
+
+	try {
+		const discovered = await discoverPlexServers(cfg.token, cfg.clientIdentifier);
+		const selected = findPersistedServer(cfg.server, discovered);
+		if (!selected) return fallback;
+
+		// Migrate configs written before the server resource identifier was stored.
+		if (
+			!cfg.server.clientIdentifier &&
+			config?.token === cfg.token &&
+			config.clientIdentifier === cfg.clientIdentifier &&
+			config.server?.url === cfg.server.url
+		) {
+			config = {
+				...cfg,
+				server: { ...cfg.server, clientIdentifier: selected.clientIdentifier },
+			};
+			saveConfig(config);
+		}
+
+		return {
+			name: selected.name,
+			clientIdentifier: selected.clientIdentifier,
+			url: selected.url,
+			local: selected.local,
+			online: selected.online,
+		};
+	} catch (error) {
+		console.error("Failed to refresh the saved Plex server:", error);
+		return fallback;
+	}
 }
 
 function disconnect(): void {
@@ -166,7 +213,7 @@ function currentServer() {
 		name: config.server.name,
 		url: config.server.url,
 		token: config.server.token,
-		clientIdentifier: config.clientIdentifier,
+		clientIdentifier: config.server.clientIdentifier ?? config.clientIdentifier,
 	};
 }
 
@@ -183,16 +230,9 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 			selectServer(params) {
 				return selectServer(params);
 			},
-			getAuthState() {
+			async getAuthState() {
 				const cfg = config;
-				const server =
-					cfg?.server && cfg.token
-						? {
-								name: cfg.server.name,
-								clientIdentifier: cfg.clientIdentifier,
-								url: cfg.server.url,
-							}
-						: undefined;
+				const server = cfg?.server && cfg.token ? await getSavedServerSummary(cfg) : undefined;
 				return {
 					authenticated: Boolean(cfg?.token),
 					hasServer: Boolean(server),

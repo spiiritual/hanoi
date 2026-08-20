@@ -1,10 +1,52 @@
 import { plex } from "./plex.ts";
+import { hydrateAccountIfMissing } from "./account-hydration.ts";
+import {
+	createAppState,
+	shellViews,
+	type AppStateSnapshot,
+	type ShellView,
+} from "./app-state.ts";
+import { serverStatusLabel } from "./server-status.ts";
 
 const $ = <T extends HTMLElement>(id: string) =>
 	document.getElementById(id) as T;
 
 const screens = ["welcome", "oauth", "connected", "servers", "home"] as const;
 type ScreenName = (typeof screens)[number];
+type ShellSearchResults = Awaited<ReturnType<typeof plex.search>>;
+
+const shellViewCopy: Record<ShellView, { eyebrow: string; title: string; copy: string }> = {
+	home: {
+		eyebrow: "HANOI",
+		title: "Home is ready.",
+		copy: "The music surface will land here next.",
+	},
+	albums: {
+		eyebrow: "YOUR LIBRARY",
+		title: "Albums are next.",
+		copy: "Album browsing will be connected in the next app slice.",
+	},
+	artists: {
+		eyebrow: "YOUR LIBRARY",
+		title: "Artists are next.",
+		copy: "Artist browsing will be connected in the next app slice.",
+	},
+	songs: {
+		eyebrow: "YOUR LIBRARY",
+		title: "Songs are next.",
+		copy: "Song browsing will be connected in the next app slice.",
+	},
+	playlists: {
+		eyebrow: "YOUR LIBRARY",
+		title: "Playlists are next.",
+		copy: "Playlist browsing will be connected in the next app slice.",
+	},
+	search: {
+		eyebrow: "SEARCH",
+		title: "Search your library.",
+		copy: "Type a song, album, or artist above to search Plex.",
+	},
+};
 type Account = {
 	username: string;
 	email: string;
@@ -20,6 +62,13 @@ type Server = {
 };
 
 let current: ScreenName = "welcome";
+let shellSearchRun = 0;
+let shellSearchTimer: number | null = null;
+let renderedShellView: ShellView = "home";
+const appState = createAppState({
+	loadMusicSections: () => plex.getMusicSections(),
+});
+let observedSearchGeneration = appState.getSnapshot().searchGeneration;
 
 // ---- Slide + fade transition engine ----
 
@@ -85,7 +134,6 @@ function goTo(to: ScreenName) {
 
 let account: Account | null = null;
 let servers: Server[] = [];
-let selectedServer: string | null = null;
 let serverLoadRun = 0;
 
 // ---- Startup routing ----
@@ -95,14 +143,24 @@ async function init() {
 		const state = await plex.getAuthState();
 		account = state.account ?? null;
 		if (state.hasServer && state.authenticated) {
+			if (!account) {
+				try {
+					account = await hydrateAccountIfMissing(account, () => plex.getAccount());
+				} catch (error) {
+					console.error("Failed to load the saved Plex account:", error);
+				}
+			}
+			const serverIdentifier = state.server?.clientIdentifier ?? null;
+			appState.setSelectedServer(serverIdentifier);
 			current = "home";
-			renderHomeScreen(account, state.server?.name);
+			renderHomeScreen(account, state.server?.name, state.server?.online);
+			if (serverIdentifier) void loadShellMusicSections();
 		} else if (state.authenticated) {
 			// Match the Pen flow: an authenticated account lands on the
 			// confirmation card before choosing a media server.
 			if (!account) {
 				try {
-					account = await plex.getAccount();
+					account = await hydrateAccountIfMissing(account, () => plex.getAccount());
 				} catch (error) {
 					console.error("Failed to load the saved Plex account:", error);
 				}
@@ -142,6 +200,59 @@ $<HTMLButtonElement>("btn-signin").addEventListener("click", startAuth);
 $<HTMLAnchorElement>("btn-create").addEventListener("click", (e) => {
 	e.preventDefault();
 	void plex.openExternal("https://www.plex.tv/sign-up/");
+});
+
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-shell-view]")) {
+	button.addEventListener("click", () => {
+		const view = button.dataset.shellView;
+		if (isShellView(view)) setShellView(view);
+	});
+}
+
+$<HTMLButtonElement>("sidebar-library-toggle").addEventListener("click", () => {
+	const toggle = $<HTMLButtonElement>("sidebar-library-toggle");
+	const items = $<HTMLDivElement>("sidebar-library-items");
+	const expanded = toggle.getAttribute("aria-expanded") === "true";
+	toggle.setAttribute("aria-expanded", String(!expanded));
+	items.toggleAttribute("hidden", expanded);
+});
+
+$<HTMLInputElement>("shell-search-input").addEventListener("input", () => {
+	const input = $<HTMLInputElement>("shell-search-input");
+	const query = input.value.trim();
+	appState.setSearchQuery(query);
+	if (shellSearchTimer !== null) window.clearTimeout(shellSearchTimer);
+	if (!query) {
+		++shellSearchRun;
+		setShellView("home");
+		return;
+	}
+	setShellView("search", { preserveSearch: true });
+	renderShellSearchStatus(`Searching for “${query}”…`);
+	shellSearchTimer = window.setTimeout(() => void runShellSearch(query), 260);
+});
+
+$<HTMLInputElement>("shell-search-input").addEventListener("keydown", (event) => {
+	if (event.key !== "Enter") return;
+	event.preventDefault();
+	const query = $<HTMLInputElement>("shell-search-input").value.trim();
+	if (shellSearchTimer !== null) window.clearTimeout(shellSearchTimer);
+	if (query) void runShellSearch(query);
+});
+
+$<HTMLButtonElement>("sidebar-server-selector").addEventListener("click", () => {
+	void toggleSidebarServerMenu();
+});
+
+$<HTMLButtonElement>("sidebar-add-server").addEventListener("click", () => {
+	closeSidebarServerMenu();
+	void startAuth();
+});
+
+document.addEventListener("click", (event) => {
+	const target = event.target;
+	const wrap = $("sidebar-server-selector").closest(".sidebar-server-wrap");
+	if (wrap && target instanceof Node && !wrap.contains(target)) closeSidebarServerMenu();
 });
 
 async function startAuth() {
@@ -256,13 +367,16 @@ $<HTMLAnchorElement>("btn-again").addEventListener("click", (e) => {
 });
 
 $<HTMLButtonElement>("btn-start").addEventListener("click", async () => {
-	if (!selectedServer) return;
+	const serverIdentifier = appState.getSnapshot().selectedServer;
+	if (!serverIdentifier) return;
 	const button = $("btn-start");
 	button.disabled = true;
 	try {
-		await plex.selectServer(selectedServer);
-		const server = servers.find((item) => item.clientIdentifier === selectedServer);
-		renderHomeScreen(account, server?.name);
+		await plex.selectServer(serverIdentifier);
+		const server = servers.find((item) => item.clientIdentifier === serverIdentifier);
+		appState.setSelectedServer(serverIdentifier);
+		renderHomeScreen(account, server?.name, server?.online);
+		void loadShellMusicSections();
 		goTo("home");
 	} catch (error) {
 		console.error("Failed to select server:", error);
@@ -274,7 +388,7 @@ $<HTMLButtonElement>("btn-start").addEventListener("click", async () => {
 
 function showServerLoading(): void {
 	++serverLoadRun;
-	selectedServer = null;
+	appState.setSelectedServer(null);
 	const list = $("server-list");
 	list.innerHTML = "";
 	const loading = document.createElement("div");
@@ -300,7 +414,7 @@ async function loadServers(): Promise<boolean> {
 		const list = await plex.getServers();
 		if (loadRun !== serverLoadRun) return false;
 		servers = list;
-		selectedServer = servers.find((server) => server.url)?.clientIdentifier ?? null;
+		appState.setSelectedServer(servers.find((server) => server.url)?.clientIdentifier ?? null);
 		renderServerList();
 		if (!servers.some((server) => server.url)) {
 			error.textContent = "No owned Plex media servers were found on this account.";
@@ -321,6 +435,7 @@ async function loadServers(): Promise<boolean> {
 function renderServerList() {
 	const list = $("server-list");
 	list.innerHTML = "";
+	const selectedServer = appState.getSnapshot().selectedServer;
 	for (const server of servers) {
 		const row = document.createElement("div");
 		row.className = "server";
@@ -355,12 +470,12 @@ function renderServerList() {
 			if (!usable) return;
 			for (const s of list.children) s.classList.remove("sel");
 			row.classList.add("sel");
-			selectedServer = server.clientIdentifier;
+			appState.setSelectedServer(server.clientIdentifier);
 			$<HTMLButtonElement>("btn-start").disabled = false;
 		});
 		list.append(row);
 	}
-	$<HTMLButtonElement>("btn-start").disabled = selectedServer === null;
+	$<HTMLButtonElement>("btn-start").disabled = appState.getSnapshot().selectedServer === null;
 }
 
 function createLucideIcon(markup: string): SVGSVGElement {
@@ -376,7 +491,283 @@ function createLucideIcon(markup: string): SVGSVGElement {
 	return svg;
 }
 
-// ---- Post-auth placeholder ----
+// ---- Authenticated app shell ----
+
+function isShellView(value: string | undefined): value is ShellView {
+	return value !== undefined && (shellViews as readonly string[]).includes(value);
+}
+
+function setShellView(view: ShellView, options: { preserveSearch?: boolean } = {}): void {
+	if (view !== "search" && !options.preserveSearch) {
+		$<HTMLInputElement>("shell-search-input").value = "";
+		if (shellSearchTimer !== null) window.clearTimeout(shellSearchTimer);
+		++shellSearchRun;
+		appState.setSearchQuery("");
+	}
+	appState.setActiveView(view);
+	renderShellView(appState.getSnapshot());
+}
+
+function renderShellView(state: AppStateSnapshot): void {
+	const view = state.activeView;
+	renderedShellView = view;
+	for (const button of document.querySelectorAll<HTMLButtonElement>("[data-shell-view]")) {
+		const selected = button.dataset.shellView === view;
+		button.classList.toggle("is-active", selected);
+		if (selected) button.setAttribute("aria-current", "page");
+		else button.removeAttribute("aria-current");
+	}
+
+	const copy = shellViewCopy[view];
+	$("shell-placeholder-eyebrow").textContent = copy.eyebrow;
+	$("shell-placeholder-title").textContent = copy.title;
+	$("shell-placeholder-copy").textContent = copy.copy;
+	$("shell-placeholder").removeAttribute("hidden");
+	$("shell-search-results").setAttribute("hidden", "");
+	$("shell-search-results").replaceChildren();
+}
+
+appState.subscribe((state) => {
+	if (state.searchGeneration !== observedSearchGeneration) {
+		observedSearchGeneration = state.searchGeneration;
+		invalidateShellSearch();
+		if (state.activeView === "search" && state.searchQuery) {
+			renderShellSearchStatus(`Searching for “${state.searchQuery}”…`);
+			void runShellSearch(state.searchQuery);
+		}
+	}
+	if (state.activeView !== renderedShellView) renderShellView(state);
+	renderMusicSectionsState(state);
+});
+
+function renderMusicSectionsState(state: AppStateSnapshot): void {
+	const status = $("shell-library-status");
+	if (state.musicSectionsStatus === "idle") {
+		status.textContent = "";
+		status.setAttribute("hidden", "");
+		return;
+	}
+
+	status.removeAttribute("hidden");
+	if (state.musicSectionsStatus === "loading") {
+		status.textContent = "Loading your Plex music library…";
+	} else if (state.musicSectionsStatus === "ready") {
+		const count = state.musicSections.length;
+		status.textContent = `${count} music librar${count === 1 ? "y" : "ies"} connected`;
+	} else {
+		status.textContent = state.musicSectionsError
+			? `Music library unavailable: ${state.musicSectionsError}`
+			: "Music library unavailable";
+	}
+}
+
+async function loadShellMusicSections(): Promise<void> {
+	try {
+		await appState.loadMusicSections();
+	} catch (error) {
+		console.error("Failed to load Plex music sections:", error);
+	}
+}
+
+function renderShellSearchStatus(message: string): void {
+	$("shell-placeholder").setAttribute("hidden", "");
+	const results = $("shell-search-results");
+	results.removeAttribute("hidden");
+	results.replaceChildren();
+	const status = document.createElement("p");
+	status.className = "shell-search-status";
+	status.textContent = message;
+	results.append(status);
+}
+
+function invalidateShellSearch(): void {
+	++shellSearchRun;
+	if (shellSearchTimer !== null) {
+		window.clearTimeout(shellSearchTimer);
+		shellSearchTimer = null;
+	}
+}
+
+async function runShellSearch(query: string): Promise<void> {
+	const run = ++shellSearchRun;
+	shellSearchTimer = null;
+	renderShellSearchStatus(`Searching for “${query}”…`);
+	try {
+		const result = await plex.search(query);
+		if (run !== shellSearchRun || appState.getSnapshot().activeView !== "search") return;
+		renderShellSearchResults(query, result);
+	} catch (error) {
+		if (run !== shellSearchRun || appState.getSnapshot().activeView !== "search") return;
+		console.error("Failed to search Plex:", error);
+		renderShellSearchStatus(`Search failed: ${(error as Error).message}`);
+	}
+}
+
+function renderShellSearchResults(query: string, result: ShellSearchResults): void {
+	const results = $("shell-search-results");
+	results.removeAttribute("hidden");
+	results.replaceChildren();
+
+	const groups = [
+		{
+			label: "Songs",
+			items: result.tracks.slice(0, 6).map((item) => ({
+				title: item.title,
+				meta: item.grandparentTitle ?? item.parentTitle ?? "Song",
+			})),
+		},
+		{
+			label: "Albums",
+			items: result.albums.slice(0, 6).map((item) => ({
+				title: item.title,
+				meta: [item.parentTitle, item.year ? String(item.year) : "Album"].filter(Boolean).join(" · "),
+			})),
+		},
+		{
+			label: "Artists",
+			items: result.artists.slice(0, 6).map((item) => ({
+				title: item.title,
+				meta: "Artist",
+			})),
+		},
+	];
+	const total = groups.reduce((count, group) => count + group.items.length, 0);
+	if (total === 0) {
+		renderShellSearchStatus(`No results for “${query}”.`);
+		return;
+	}
+
+	const heading = document.createElement("p");
+	heading.className = "shell-search-status";
+	heading.textContent = `${total} result${total === 1 ? "" : "s"} for “${query}”`;
+	results.append(heading);
+
+	for (const group of groups) {
+		if (group.items.length === 0) continue;
+		const section = document.createElement("section");
+		section.className = "shell-search-group";
+		const title = document.createElement("h3");
+		title.textContent = group.label;
+		const items = document.createElement("div");
+		items.className = "shell-search-items";
+		for (const item of group.items) {
+			const card = document.createElement("div");
+			card.className = "shell-search-item";
+			card.setAttribute("role", "listitem");
+			const itemTitle = document.createElement("span");
+			itemTitle.className = "shell-search-item-title";
+			itemTitle.textContent = item.title;
+			const itemMeta = document.createElement("span");
+			itemMeta.className = "shell-search-item-meta";
+			itemMeta.textContent = item.meta;
+			card.append(itemTitle, itemMeta);
+			items.append(card);
+		}
+		section.append(title, items);
+		results.append(section);
+	}
+}
+
+function closeSidebarServerMenu(): void {
+	const menu = $("sidebar-server-menu");
+	menu.setAttribute("hidden", "");
+	const selector = $("sidebar-server-selector");
+	selector.classList.remove("is-open");
+	selector.setAttribute("aria-expanded", "false");
+	$("sidebar-server-chevron").querySelector("path")?.setAttribute("d", "m6 15 6-6 6 6");
+}
+
+async function toggleSidebarServerMenu(): Promise<void> {
+	const menu = $("sidebar-server-menu");
+	if (!menu.hasAttribute("hidden")) {
+		closeSidebarServerMenu();
+		return;
+	}
+
+	menu.removeAttribute("hidden");
+	const selector = $("sidebar-server-selector");
+	selector.classList.add("is-open");
+	selector.setAttribute("aria-expanded", "true");
+	$("sidebar-server-chevron").querySelector("path")?.setAttribute("d", "m6 9 6 6 6-6");
+	const options = $("sidebar-server-options");
+	options.replaceChildren();
+	const loading = document.createElement("div");
+	loading.className = "sidebar-server-option-status";
+	loading.textContent = "Loading servers…";
+	options.append(loading);
+
+	try {
+		servers = await plex.getServers();
+		if (!menu.hasAttribute("hidden")) renderSidebarServerOptions(servers);
+	} catch (error) {
+		if (menu.hasAttribute("hidden")) return;
+		options.replaceChildren();
+		const message = document.createElement("div");
+		message.className = "sidebar-server-option-status";
+		message.textContent = `Couldn't load servers: ${(error as Error).message}`;
+		options.append(message);
+	}
+}
+
+function renderSidebarServerOptions(availableServers: Server[]): void {
+	const options = $("sidebar-server-options");
+	options.replaceChildren();
+	const selectedServer = appState.getSnapshot().selectedServer;
+	if (availableServers.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "sidebar-server-option-status";
+		empty.textContent = "No servers found";
+		options.append(empty);
+		return;
+	}
+
+	for (const server of availableServers) {
+		const option = document.createElement("button");
+		option.type = "button";
+		option.className = "sidebar-server-option";
+		const copy = document.createElement("span");
+		copy.className = "sidebar-server-option-copy";
+		const name = document.createElement("span");
+		name.className = "sidebar-server-option-name";
+		name.textContent = server.name;
+		const status = document.createElement("span");
+		status.className = "sidebar-server-option-status";
+		status.classList.toggle("is-online", server.online !== false);
+		status.textContent = serverStatusLabel(server.online);
+		copy.append(name, status);
+		option.append(copy);
+		if (server.clientIdentifier === selectedServer) {
+			const check = document.createElement("span");
+			check.className = "sidebar-server-option-check";
+			check.textContent = "✓";
+			option.append(check);
+		}
+		option.addEventListener("click", () => void selectSidebarServer(server));
+		options.append(option);
+	}
+}
+
+async function selectSidebarServer(server: Server): Promise<void> {
+	const selectedServer = appState.getSnapshot().selectedServer;
+	if (!server.url || server.clientIdentifier === selectedServer) {
+		closeSidebarServerMenu();
+		return;
+	}
+	try {
+		await plex.selectServer(server.clientIdentifier);
+		appState.setSelectedServer(server.clientIdentifier);
+		renderHomeScreen(account, server.name, server.online);
+		void loadShellMusicSections();
+		closeSidebarServerMenu();
+	} catch (error) {
+		const options = $("sidebar-server-options");
+		options.replaceChildren();
+		const message = document.createElement("div");
+		message.className = "sidebar-server-option-status";
+		message.textContent = `Couldn't connect: ${(error as Error).message}`;
+		options.append(message);
+	}
+}
 
 async function renderConnectedScreen(acct: Account | null, run?: number): Promise<void> {
 	const name = acct?.username || "Plex account";
@@ -417,11 +808,24 @@ async function renderConnectedScreen(acct: Account | null, run?: number): Promis
 	initialsElement.hidden = true;
 }
 
-function renderHomeScreen(acct?: Account | null, serverName?: string): void {
-	$("home-username").textContent = acct?.username || "Plex account";
-	const resolvedServerName =
-		serverName ?? servers.find((s) => s.clientIdentifier === selectedServer)?.name;
-	$("home-server-name").textContent = resolvedServerName || "your server";
+function renderHomeScreen(acct?: Account | null, serverName?: string, serverOnline?: boolean): void {
+	const name = acct?.username || "Plex account";
+	const selectedServer = appState.getSnapshot().selectedServer;
+	const selectedServerInfo = servers.find((s) => s.clientIdentifier === selectedServer);
+	const resolvedServerName = serverName ?? selectedServerInfo?.name;
+	const resolvedServerOnline = serverOnline ?? selectedServerInfo?.online;
+	const initials = name
+		.split(/\s+/)
+		.filter(Boolean)
+		.slice(0, 2)
+		.map((part) => part.charAt(0))
+		.join("")
+		.toUpperCase();
+
+	$("sidebar-user-name").textContent = name;
+	$("sidebar-avatar").textContent = initials;
+	$("sidebar-server-name").textContent = resolvedServerName || "your server";
+	$("sidebar-server-status").textContent = serverStatusLabel(resolvedServerOnline);
 }
 
 // Initial route: hide everything not current (handled above in init()).

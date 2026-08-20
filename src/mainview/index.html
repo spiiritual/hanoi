@@ -134,14 +134,85 @@
 			</div>
 		</section>
 
-		<!-- 5. Post-auth placeholder (real Home/library UI not built yet) -->
-		<section class="screen is-hidden" id="screen-home">
-			<div class="auth-inner">
-				<div class="badge"><div class="badge-check">✓</div></div>
-				<div class="spacer" style="height:28px"></div>
-				<h2 class="title">Connected</h2>
-				<div class="spacer" style="height:12px"></div>
-				<p class="subtitle">Signed in as <span id="home-username">…</span> on <span id="home-server-name">…</span>. The main app UI comes next.</p>
+		<!-- 5. Authenticated app shell -->
+		<section class="screen app-screen is-hidden" id="screen-home">
+			<div class="app-shell" id="home-shell">
+				<aside class="app-sidebar" aria-label="Main navigation">
+					<nav class="sidebar-nav">
+						<button class="sidebar-nav-item is-active" type="button" id="sidebar-home" data-shell-view="home" aria-current="page">
+							<svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"></path></svg>
+							<span>Home</span>
+						</button>
+
+						<div class="sidebar-library">
+							<button class="sidebar-nav-item sidebar-library-toggle" type="button" id="sidebar-library-toggle" aria-expanded="true">
+								<svg class="sidebar-icon is-accent" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"></path><path d="M8 7h8M8 11h8M8 15h5"></path></svg>
+								<span>Your Library</span>
+							</button>
+							<div class="sidebar-library-items">
+								<button class="sidebar-subnav-item" type="button" data-shell-view="albums"><svg class="sidebar-subnav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="2"></circle></svg><span>Albums</span></button>
+								<button class="sidebar-subnav-item" type="button" data-shell-view="artists"><svg class="sidebar-subnav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><circle cx="17" cy="9" r="2"></circle><path d="M3 20a6 6 0 0 1 12 0M15 19a4 4 0 0 1 6 0"></path></svg><span>Artists</span></button>
+								<button class="sidebar-subnav-item" type="button" data-shell-view="songs"><svg class="sidebar-subnav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l10-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg><span>Songs</span></button>
+								<button class="sidebar-subnav-item" type="button" data-shell-view="playlists"><svg class="sidebar-subnav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"></path><path d="M3 6h.01M3 12h.01M3 18h.01"></path></svg><span>Playlists</span></button>
+							</div>
+						</div>
+					</nav>
+
+					<div class="sidebar-spacer"></div>
+
+					<div class="sidebar-server-wrap">
+						<button class="sidebar-server-selector" type="button" id="sidebar-server-selector" aria-expanded="false" aria-controls="sidebar-server-menu">
+							<span class="sidebar-server-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"></rect><rect x="3" y="14" width="18" height="7" rx="2"></rect><path d="M7 6.5h.01M7 17.5h.01"></path></svg></span>
+							<span class="sidebar-server-copy"><span class="sidebar-server-name" id="sidebar-server-name">Home Server</span><span class="sidebar-server-status" id="sidebar-server-status">● Online</span></span>
+							<svg class="sidebar-chevron" id="sidebar-server-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"></path></svg>
+						</button>
+						<div class="sidebar-server-menu" id="sidebar-server-menu" hidden>
+							<div class="sidebar-server-menu-title">Your servers</div>
+							<div class="sidebar-server-options" id="sidebar-server-options"></div>
+							<button class="sidebar-add-server" type="button" id="sidebar-add-server">Add a server…</button>
+						</div>
+					</div>
+
+					<div class="sidebar-user">
+						<div class="sidebar-avatar" id="sidebar-avatar" aria-hidden="true">AR</div>
+						<span class="sidebar-user-name" id="sidebar-user-name">Alex Rivera</span>
+						<span class="sidebar-user-spacer"></span>
+						<button class="sidebar-settings" type="button" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path><path d="m19.4 15 .1.1a2 2 0 1 1-2.8 2.8l-.1-.1a2 2 0 0 0-3.4 1.4v.3a2 2 0 1 1-4 0v-.2a2 2 0 0 0-3.4-1.5l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A2 2 0 0 0 3.6 11H3.3a2 2 0 1 1 0-4h.2A2 2 0 0 0 5 3.6l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A2 2 0 0 0 11.2 0h.3a2 2 0 1 1 4 0v.2a2 2 0 0 0 3.4 1.5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A2 2 0 0 0 21 8.9v.3a2 2 0 1 1 0 4h-.2a2 2 0 0 0-1.4 3.4Z" transform="translate(0 4)"></path></svg></button>
+					</div>
+				</aside>
+
+				<main class="home-main">
+					<header class="home-topbar">
+						<button class="topbar-icon" type="button" aria-label="Back" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg></button>
+						<button class="topbar-icon is-muted" type="button" aria-label="Forward" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg></button>
+						<label class="topbar-search" for="shell-search-input"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg><input id="shell-search-input" type="search" placeholder="Search songs, albums, artists" autocomplete="off" spellcheck="false"></label>
+						<div class="topbar-spacer"></div>
+						<button class="topbar-icon" type="button" aria-label="Queue" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></button>
+						<button class="topbar-icon" type="button" aria-label="Notifications" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path></svg></button>
+					</header>
+					<div class="home-content" id="home-content">
+						<div class="home-shell-placeholder" id="shell-placeholder">
+							<span class="home-shell-eyebrow" id="shell-placeholder-eyebrow">HANOI</span>
+							<h2 id="shell-placeholder-title">Home is ready.</h2>
+							<p id="shell-placeholder-copy">The music surface will land here next.</p>
+							<p class="home-shell-status" id="shell-library-status" aria-live="polite" hidden></p>
+						</div>
+						<div class="shell-search-results" id="shell-search-results" hidden></div>
+					</div>
+				</main>
+
+				<div class="player-bar" id="player-bar">
+					<div class="player-now-playing">
+						<div class="player-art" aria-hidden="true"></div>
+						<div class="player-now-copy"><span class="player-track-name">Nothing playing</span><span class="player-track-meta">Choose a track to start listening</span></div>
+						<button class="player-heart" type="button" aria-label="Like track" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 8.7c0 5.5-8.8 10.3-8.8 10.3S3.2 14.2 3.2 8.7A4.7 4.7 0 0 1 12 6.4a4.7 4.7 0 0 1 8.8 2.3Z"></path></svg></button>
+					</div>
+					<div class="player-transport">
+						<div class="player-controls"><button type="button" aria-label="Previous" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m19 20-9-8 9-8v16ZM5 19V5"></path></svg></button><button class="player-play" type="button" aria-label="Play" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"></path></svg></button><button type="button" aria-label="Next" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 4 9 8-9 8V4Zm14 1v14"></path></svg></button></div>
+						<div class="player-progress"><span>0:00</span><div class="player-progress-track"><span></span></div><span>0:00</span></div>
+					</div>
+					<div class="player-right-controls"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5ZM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"></path></svg><div class="player-volume-track"><span></span></div></div>
+				</div>
 			</div>
 		</section>
 
