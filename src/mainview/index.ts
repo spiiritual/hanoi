@@ -783,7 +783,7 @@ function renderHomeHubItem(item: PlexHubItem, category = false): HTMLElement {
 	card.className = category ? "home-hub-card home-category-card" : "home-hub-card";
 	card.setAttribute("role", "listitem");
 	const interaction = homeHubItemInteraction(item);
-	if (interaction) card.classList.add(`home-hub-card-${interaction}`);
+	card.classList.add(`home-hub-card-${interaction}`);
 
 	const art = document.createElement("div");
 	art.className = "home-hub-card-art";

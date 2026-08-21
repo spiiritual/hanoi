@@ -77,7 +77,7 @@ test("expanded category cards identify the Plex media type", () => {
 	).toBe("Artist");
 });
 
-test("home cards expose the Pen interaction state for tracks and albums", () => {
+test("home cards expose the Pen track hover state only for tracks", () => {
 	expect(
 		homeHubItemInteraction({
 			ratingKey: "track-1",
@@ -86,6 +86,9 @@ test("home cards expose the Pen interaction state for tracks and albums", () => 
 			title: "Track one",
 		}),
 	).toBe("track");
+});
+
+test("home cards expose the shared non-track hover state for every other media type", () => {
 	expect(
 		homeHubItemInteraction({
 			ratingKey: "album-1",
@@ -93,7 +96,7 @@ test("home cards expose the Pen interaction state for tracks and albums", () => 
 			type: "album",
 			title: "Album one",
 		}),
-	).toBe("album");
+	).toBe("other");
 	expect(
 		homeHubItemInteraction({
 			ratingKey: "artist-1",
@@ -101,5 +104,13 @@ test("home cards expose the Pen interaction state for tracks and albums", () => 
 			type: "artist",
 			title: "Artist one",
 		}),
-	).toBeNull();
+	).toBe("other");
+	expect(
+		homeHubItemInteraction({
+			ratingKey: "playlist-1",
+			key: "/playlists/playlist-1/items",
+			type: "playlist",
+			title: "Playlist one",
+		}),
+	).toBe("other");
 });

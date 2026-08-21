@@ -1221,13 +1221,21 @@ body {
 	gap: 12px;
 	min-width: 0;
 	overflow-x: auto;
-	padding-bottom: 8px;
+	scrollbar-width: none;
+	padding: 8px 3px 16px;
+	margin: -8px -3px -8px;
+}
+
+.home-hub-cards::-webkit-scrollbar {
+	display: none;
 }
 
 .home-hub-card {
+	position: relative;
 	display: flex;
 	width: 150px;
-	height: 216px;
+	height: auto;
+	align-self: start;
 	flex-direction: column;
 	align-items: center;
 	gap: 10px;
@@ -1238,13 +1246,31 @@ body {
 	text-align: left;
 }
 
-.home-hub-card-album,
-.home-hub-card-track {
+.home-hub-card::before {
+	position: absolute;
+	z-index: 0;
+	inset: -8px -3px;
+	border-radius: 8px;
+	background: var(--surface-2);
+	content: "";
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease;
+}
+
+.home-hub-card:hover::before,
+.home-hub-card:focus-within::before {
+	opacity: 1;
+}
+
+.home-hub-card-track,
+.home-hub-card-other {
 	cursor: pointer;
 }
 
 .home-hub-card-art {
 	position: relative;
+	z-index: 1;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -1255,16 +1281,6 @@ body {
 	border-radius: 10px;
 	background: linear-gradient(135deg, #363640 0%, #1f1f27 100%);
 }
-
-.home-hub-card-album .home-hub-card-art {
-	transition: box-shadow 120ms ease;
-}
-
-.home-hub-card-album:hover .home-hub-card-art,
-.home-hub-card-album:focus-visible .home-hub-card-art {
-	box-shadow: 0 0 0 2px var(--surface-2);
-}
-
 .home-hub-card-play {
 	position: absolute;
 	right: 8px;
@@ -1277,6 +1293,7 @@ body {
 	padding: 0;
 	border: 0;
 	border-radius: 50%;
+	cursor: pointer;
 	background: var(--accent);
 	color: var(--bg);
 	opacity: 0;
@@ -1330,6 +1347,8 @@ body {
 }
 
 .home-hub-card-text {
+	position: relative;
+	z-index: 1;
 	display: flex;
 	min-width: 0;
 	width: 140px;

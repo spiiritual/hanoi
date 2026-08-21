@@ -71,9 +71,30 @@ test("home cards preserve the Pen card geometry", () => {
 test("home cards expose Pen hover affordances by media type", () => {
 	expect(mainview).toContain("homeHubItemInteraction");
 	expect(mainview).toContain("home-hub-card-play");
-	expect(css).toContain(".home-hub-card-album:hover .home-hub-card-art");
+	expect(css).toContain(".home-hub-card:hover::before");
+	expect(css).toContain(".home-hub-card-other");
 	expect(css).toContain(".home-hub-card-track:hover .home-hub-card-play");
 	expect(css).toContain(".home-hub-card-track:focus-within .home-hub-card-play");
+});
+
+test("home card rows reserve space for the Pen hover backdrop", () => {
+	expect(css).toMatch(
+		/\.home-hub-cards\s*\{[\s\S]*?padding: 8px 3px 16px;[\s\S]*?margin: -8px -3px -8px;/,
+	);
+});
+
+test("home card hover surfaces fit their content and the track play chip is clickable", () => {
+	expect(css).toMatch(
+		/\.home-hub-card\s*\{[\s\S]*?height: auto;[\s\S]*?align-self: start;/,
+	);
+	expect(css).toMatch(/\.home-hub-card-play\s*\{[\s\S]*?cursor: pointer;/);
+});
+
+test("home card rows keep horizontal scrolling without exposing native scrollbars", () => {
+	expect(css).toMatch(
+		/\.home-hub-cards\s*\{[\s\S]*?overflow-x: auto;[\s\S]*?scrollbar-width: none;/,
+	);
+	expect(css).toContain(".home-hub-cards::-webkit-scrollbar");
 });
 
 test("Pen active and closed selector states have explicit visual rules", () => {

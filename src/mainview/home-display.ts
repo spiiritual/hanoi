@@ -3,13 +3,12 @@ import type { PlexHub } from "../bun/plex/types.ts";
 
 export const HOME_HUB_PREVIEW_SIZE = 6;
 
-export type HomeHubItemInteraction = "track" | "album" | null;
+export type HomeHubItemInteraction = "track" | "other";
 
 /** Interaction affordance shown for a Plex Home card. */
 export function homeHubItemInteraction(item: PlexHubItem): HomeHubItemInteraction {
 	if (item.type === "track") return "track";
-	if (item.type === "album") return "album";
-	return null;
+	return "other";
 }
 
 /** Plex Home hubs are previews when they fill all six card slots. */
