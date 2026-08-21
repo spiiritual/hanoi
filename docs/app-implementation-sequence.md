@@ -7,8 +7,8 @@ ship as a usable vertical increment on top of the shared shell.
    player-bar space. Use real account and selected-server data.
 2. Navigation and shared data state — route/view state for Home, Albums,
    Artists, Songs, Playlists, and Search; load the Plex music section once.
-3. Home — Recently Played and Most Played with real Plex data plus loading,
-   empty, and error states.
+3. Home — render Plex-provided `/hubs` and music-section hub categories with
+   real music data plus loading, empty, error, and retry states.
 4. Playback — resolve stream URLs, play audio, show now-playing state and
    controls, and scrobble tracks.
 5. Albums — album grid, sorting, hover states, album detail, and track list.

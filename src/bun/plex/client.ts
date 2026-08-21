@@ -21,7 +21,12 @@ import {
 	type PlexTrack,
 } from "./schemas.ts";
 import type { PlexServerInfo, PlexAccount } from "./types.ts";
-import { discoverServers, serverUrl } from "./auth.ts";
+import {
+	connectionCandidates,
+	discoverServers,
+	type PlexConnection,
+	type PlexServerResource,
+} from "./auth.ts";
 
 export interface PlexClientOptions {
 	/** Base URL of the Plex Media Server, e.g. http://192.168.1.10:32400 */
@@ -43,6 +48,85 @@ export interface BrowseOptions {
 }
 
 const DEFAULT_STATUS_TIMEOUT_MS = 3000;
+const RECENTLY_PLAYED_HUB_PREFIX = "music.recent.played.";
+
+export type ServerConnectionProbe = (url: string, token: string) => Promise<boolean>;
+
+function isAudioHomeItem(item: PlexHubItem): boolean {
+	return (
+		item.type === "artist" ||
+		item.type === "album" ||
+		item.type === "track" ||
+		(item.type === "playlist" && item.playlistType !== "video")
+	);
+}
+
+function hasAudioHomeItems(hub: PlexHub): boolean {
+	return (hub.Metadata ?? []).some(isAudioHomeItem);
+}
+
+function hasAudioPlaylist(hub: PlexHub): boolean {
+	return (hub.Metadata ?? []).some(
+		(item) => item.type === "playlist" && item.playlistType !== "video",
+	);
+}
+
+/**
+ * Plex exposes general home hubs and music-library hubs through separate
+ * endpoints. Use the music-library order as the main home surface, then keep
+ * useful global audio playlist rows that are not part of that response.
+ */
+export function composeHomeHubs(sectionHubs: PlexHub[], globalHubs: PlexHub[]): PlexHub[] {
+	const musicRows = sectionHubs.filter(hasAudioHomeItems);
+	if (musicRows.length === 0) return globalHubs.filter(hasAudioHomeItems);
+
+	const sectionIdentifiers = new Set(
+		musicRows
+			.map((hub) => hub.hubIdentifier)
+			.filter((identifier): identifier is string => Boolean(identifier)),
+	);
+	const globalPlaylistRows = globalHubs.filter(
+		(hub) =>
+			hasAudioPlaylist(hub) &&
+			(!hub.hubIdentifier || !sectionIdentifiers.has(hub.hubIdentifier)),
+	);
+	return [...musicRows, ...globalPlaylistRows];
+}
+
+/** Replace Plex's artist-only recent-play hub with the mixed activity preview. */
+export function replaceRecentlyPlayedPreview(
+	hubs: PlexHub[],
+	recentlyPlayed: PlexHubItem[],
+): PlexHub[] {
+	if (recentlyPlayed.length === 0) return hubs;
+	let replaced = false;
+	return hubs.map((hub) => {
+		if (replaced || !hub.hubIdentifier?.startsWith(RECENTLY_PLAYED_HUB_PREFIX)) {
+			return hub;
+		}
+		replaced = true;
+		return { ...hub, Metadata: recentlyPlayed };
+	});
+}
+
+/** Probe all candidates concurrently and return the first reachable one by priority. */
+export async function selectReachableConnection(
+	resource: PlexServerResource,
+	token: string,
+	probe: ServerConnectionProbe = checkPlexServerStatus,
+): Promise<PlexConnection | undefined> {
+	const candidates = connectionCandidates(resource);
+	const reachable = await Promise.all(
+		candidates.map(async (connection) => {
+			try {
+				return await probe(connection.uri, token);
+			} catch {
+				return false;
+			}
+		}),
+	);
+	return candidates.find((_, index) => reachable[index]);
+}
 
 export class PlexClient {
 	private readonly _baseUrl: string;
@@ -328,10 +412,31 @@ export class PlexClient {
 		return { artists, albums, tracks };
 	}
 
-	/** Home-screen hub groupings via `/hubs`. `identifiers` selects specific hubs; omit to fetch all. */
+	/**
+	 * Home-screen hub groupings. Plex's global `/hubs` response only contains a
+	 * subset of music rows, so the default request combines it with each music
+	 * section's `/hubs/sections/{key}` response. `identifiers` preserves the
+	 * direct global-hub query for callers that need a specific hub set.
+	 */
 	async getHomeHubs(identifiers?: string[]): Promise<PlexHub[]> {
 		const query = identifiers?.length ? `?identifier=${identifiers.join(",")}` : "";
-		return this.parseContainerArray<PlexHub>(`/hubs${query}`, hubSchema, "Hub");
+		if (identifiers?.length) {
+			return this.parseContainerArray<PlexHub>(`/hubs${query}`, hubSchema, "Hub");
+		}
+
+		const globalHubs = await this.parseContainerArray<PlexHub>("/hubs", hubSchema, "Hub");
+		const sections = await this.getMusicSections();
+		if (sections.length === 0) return globalHubs;
+		const [sectionHubs, recentlyPlayed] = await Promise.all([
+			Promise.all(sections.map((section) => this.getSectionHubs(section.key))).then((hubs) =>
+				hubs.flat(),
+			),
+			this.getRecentlyPlayedForSections(sections),
+		]);
+		return replaceRecentlyPlayedPreview(
+			composeHomeHubs(sectionHubs, globalHubs),
+			recentlyPlayed,
+		);
 	}
 
 	/** Hubs for a library section via `/hubs/sections/{key}`. */
@@ -343,6 +448,11 @@ export class PlexClient {
 		);
 	}
 
+	/** Load every item for a Home row from the full-data key Plex attaches to the hub. */
+	async getHomeHubItems(key: string): Promise<PlexHubItem[]> {
+		return this.parseContainerArray<PlexHubItem>(key, hubItemSchema, "Metadata");
+	}
+
 	/**
 	 * Recently played music across all music sections: artists, albums, and
 	 * tracks, most recently played first. The `music.recent.played` hub only
@@ -351,6 +461,12 @@ export class PlexClient {
 	 */
 	async getRecentlyPlayed(): Promise<PlexHubItem[]> {
 		const sections = await this.getMusicSections();
+		return this.getRecentlyPlayedForSections(sections);
+	}
+
+	private async getRecentlyPlayedForSections(
+		sections: PlexSection[],
+	): Promise<PlexHubItem[]> {
 		const perSection = await Promise.all(
 			sections.map(async (section) => {
 				const [artists, albums, tracks] = await Promise.all([
@@ -636,22 +752,23 @@ export async function discoverPlexServers(
 	clientIdentifier: string,
 ): Promise<PlexServerInfo[]> {
 	const resources = await discoverServers(token, clientIdentifier);
-	const statuses = await Promise.allSettled(
-		resources.map((resource) =>
-			checkPlexServerStatus(serverUrl(resource), resource.accessToken ?? token),
-		),
+	return Promise.all(
+		resources.map(async (resource) => {
+			const serverToken = resource.accessToken ?? token;
+			const candidates = connectionCandidates(resource);
+			const selected = await selectReachableConnection(resource, serverToken);
+			const fallback = candidates[0];
+			const connection = selected ?? fallback;
+			return {
+				name: resource.name,
+				clientIdentifier: resource.clientIdentifier,
+				url: connection?.uri ?? "",
+				token: serverToken,
+				local: connection?.local ?? false,
+				online: selected !== undefined,
+			};
+		}),
 	);
-	return resources.map((resource, i) => {
-		const url = serverUrl(resource);
-		return {
-			name: resource.name,
-			clientIdentifier: resource.clientIdentifier,
-			url,
-			token: resource.accessToken ?? token,
-			local: resource.connections?.some((c) => c.local) ?? false,
-			online: statuses[i]?.status === "fulfilled" && statuses[i].value === true,
-		};
-	});
 }
 
 /** Reachability of a server: GET `/identity` with the token, ~3s timeout. */

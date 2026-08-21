@@ -9,14 +9,14 @@ import {
 	discoverPlexServers,
 	getPlexAccount,
 } from "./plex/client.ts";
-import { findPersistedServer } from "./plex/server-selection.ts";
+import { findPersistedServer, savedServerNeedsRefresh } from "./plex/server-selection.ts";
 import {
 	accountImageUrl as buildAccountImageUrl,
 	imageUrl as buildImageUrl,
 	streamUrl as resolveStreamUrl,
 	transcodedImageUrl as buildTranscodedImageUrl,
 } from "./plex/url.ts";
-import type { PlexAccount, PlexTrack } from "./plex/types.ts";
+import type { PlexAccount, PlexServerInfo, PlexTrack } from "./plex/types.ts";
 
 let config = loadConfig();
 let client: PlexClient | null =
@@ -184,7 +184,16 @@ async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary
 				...cfg,
 				server: { ...cfg.server, clientIdentifier: selected.clientIdentifier },
 			};
-			saveConfig(config);
+				saveConfig(config);
+		}
+
+		if (
+			selected.online &&
+			selected.url &&
+			config?.token === cfg.token &&
+			config.clientIdentifier === cfg.clientIdentifier
+		) {
+			syncActiveServer(cfg, selected);
 		}
 
 		return {
@@ -197,6 +206,37 @@ async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary
 	} catch (error) {
 		console.error("Failed to refresh the saved Plex server:", error);
 		return fallback;
+	}
+}
+
+/** Replace a stale active URL with the reachable connection selected by discovery. */
+function syncActiveServer(cfg: PlexConfig, selected: PlexServerInfo): void {
+	if (!selected.online || !selected.url) return;
+	if (config?.token !== cfg.token || config.clientIdentifier !== cfg.clientIdentifier) return;
+
+	const nextServer = {
+		clientIdentifier: selected.clientIdentifier,
+		name: selected.name,
+		url: selected.url,
+		token: selected.token,
+	};
+	const currentServer = config.server;
+	const needsRefresh = !currentServer || savedServerNeedsRefresh(currentServer, selected);
+	if (needsRefresh) {
+		config = { ...config, server: nextServer };
+		saveConfig(config);
+	}
+	if (
+		needsRefresh ||
+		!client ||
+		client.baseUrl !== selected.url ||
+		client.token !== selected.token
+	) {
+		client = new PlexClient({
+			url: selected.url,
+			token: selected.token,
+			clientIdentifier: cfg.clientIdentifier,
+		});
 	}
 }
 
@@ -257,8 +297,11 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 				return buildAccountImageUrl(account.thumb, cfg.token);
 			},
 			async getServers() {
-				if (!config?.token) return [];
-				const servers = await discoverPlexServers(config.token, config.clientIdentifier);
+				const cfg = config;
+				if (!cfg?.token) return [];
+				const servers = await discoverPlexServers(cfg.token, cfg.clientIdentifier);
+				const selected = cfg.server ? findPersistedServer(cfg.server, servers) : undefined;
+				if (selected) syncActiveServer(cfg, selected);
 				return servers.map((server) => ({
 					name: server.name,
 					clientIdentifier: server.clientIdentifier,
@@ -295,6 +338,12 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 			},
 			getArtist(params) {
 				return requireClient().getArtist(params.ratingKey);
+			},
+			getHomeHubs(params) {
+				return requireClient().getHomeHubs(params.identifiers);
+			},
+			getHomeHubItems(params) {
+				return requireClient().getHomeHubItems(params.key);
 			},
 			getRecentlyPlayed() {
 				return requireClient().getRecentlyPlayed();

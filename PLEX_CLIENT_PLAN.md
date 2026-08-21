@@ -119,8 +119,8 @@ Re-implement the plex.tv PIN flow:
 - `createPin(clientIdentifier)` → POST `/api/v2/pins?strong=true`
 - `buildAuthUrl(pin)` → `https://app.plex.tv/auth#?…`
 - `waitForPin(pin, { onPoll, signal })` → poll GET `/api/v2/pins/{id}` until `authToken` set (5 min timeout, 2 s interval). **Cancellable** via AbortSignal/flag so `cancelAuth` can stop the poll cleanly.
-- `discoverServers(token, clientIdentifier)` → GET `/api/v2/resources?includeHttps=1`
-- `serverUrl(resource)` → local connection first, then first connection
+- `discoverServers(token, clientIdentifier)` → GET `/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1`
+- `connectionCandidates(resource)` → local direct first, other direct connections next, relay last
 
 Device headers: `X-Plex-Product: hanoi`, `X-Plex-Device-Name: hanoi`, `X-Plex-Platform: process.platform`.
 
@@ -144,9 +144,9 @@ interface BrowseOptions {
 | Method | Endpoint | Used by |
 |---|---|---|
 | `getAccount()` | Plex.tv `/api/v2/user` with X-Plex-Token | Sidebar user, Connected card |
-| `discoverServers(token, clientIdentifier)` | Plex.tv `/api/v2/resources?includeHttps=1` | Server Selection, sidebar dropdown |
+| `discoverServers(token, clientIdentifier)` | Plex.tv `/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1` | Server Selection, sidebar dropdown |
 | `checkServerStatus(url, token)` | GET `${url}/identity`, ~3s timeout → boolean | Sidebar dot, dropdown |
-| `getServers()` | `discoverServers` + parallel `checkServerStatus` via `Promise.allSettled` → `PlexServerInfo[]` | Sidebar dropdown, Server Selection |
+| `getServers()` | `discoverServers` + parallel `/identity` probes for every candidate, selecting the first reachable connection → `PlexServerInfo[]` | Sidebar dropdown, Server Selection |
 
 ### Browse
 
@@ -173,9 +173,22 @@ interface BrowseOptions {
 
 | Method | Endpoint | Used by |
 |---|---|---|
-| `getHomeHubs(identifiers?)` | `/hubs` | Home (recently played hub) |
-| `getRecentlyPlayed()` | as in plexamp-cli | Home "Recently Played" row |
-| `getMostPlayed(sinceMs?)` (new) | `…/all?type=10&viewCount>=1&sort=viewCount:desc&addedAt>=…` | Home "Most Played in December" |
+| `getHomeHubs(identifiers?)` | `/hubs` plus `/library/sections`, `/hubs/sections/{key}`, and derived recent-play queries | Home's server-defined music row categories and audio playlists |
+| `getRecentlyPlayed()` | derived library query | Mixed artist/album/track recent-play feed |
+| `getMostPlayed(sinceMs?)` (new) | derived library query | Optional focused most-played view; not the Home row source |
+
+The Home view consumes the ordered `Hub[]` response from `getHomeHubs()` so
+Plex controls the row titles, identifiers, and category mix. Plex's global
+`/hubs` response omits many music-library rows, so the default call combines
+it with the ordered responses from `/hubs/sections/{key}` for every music
+section, retaining global audio playlist rows as supplements. The section
+`music.recent.played.*` hub is artist-only, so `getHomeHubs()` replaces its
+preview metadata with the first mixed artist/album/track results from the
+recent-play queries. Hanoi filters each row's metadata to music item types
+(`artist`, `album`, `track`, and audio `playlist`) while preserving Plex's row
+order. Home renders the hub cards as previews without treating Plex's preview
+size as the category's total. `getHomeHubs()` is exposed through RPC; hub rows
+carry `title`, `hubIdentifier`, `type`, `size`, and nested `Metadata` items.
 
 ### Search
 

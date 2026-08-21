@@ -98,8 +98,13 @@ export const pinPollSchema = z
 
 const connectionSchema = z
 	.object({
+		protocol: z.string().optional(),
+		address: z.string().optional(),
+		port: z.number().optional(),
 		uri: z.string(),
 		local: z.boolean(),
+		relay: z.boolean().optional(),
+		IPv6: z.boolean().optional(),
 	})
 	.passthrough();
 
@@ -229,18 +234,34 @@ export const hubItemSchema = z
 		title: z.string(),
 		thumb: z.string().optional(),
 		composite: z.string().optional(),
+		art: z.string().optional(),
 		parentTitle: z.string().optional(),
+		parentRatingKey: z.string().optional(),
 		grandparentTitle: z.string().optional(),
+		grandparentRatingKey: z.string().optional(),
 		year: z.number().optional(),
 		duration: z.number().optional(),
+		leafCount: z.number().optional(),
+		childCount: z.number().optional(),
+		playlistType: z.string().optional(),
 		viewCount: z.number().optional(),
+		viewedAt: z.number().optional(),
 		lastViewedAt: z.number().optional(),
+		addedAt: z.number().optional(),
+		updatedAt: z.number().optional(),
 	})
 	.passthrough();
 
-/** Only `Metadata` is consumed (hub title/identifier are not rendered). */
+/** A server-provided Home row and the media items displayed inside it. */
 export const hubSchema = z
 	.object({
+		key: z.string().optional(),
+		title: z.string().optional(),
+		type: z.string().optional(),
+		hubIdentifier: z.string().optional(),
+		context: z.string().optional(),
+		size: z.number().optional(),
+		totalSize: z.number().optional(),
 		Metadata: z.array(hubItemSchema).optional(),
 	})
 	.passthrough();

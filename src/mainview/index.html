@@ -163,7 +163,7 @@
 					<div class="sidebar-server-wrap">
 						<button class="sidebar-server-selector" type="button" id="sidebar-server-selector" aria-expanded="false" aria-controls="sidebar-server-menu">
 							<span class="sidebar-server-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"></rect><rect x="3" y="14" width="18" height="7" rx="2"></rect><path d="M7 6.5h.01M7 17.5h.01"></path></svg></span>
-							<span class="sidebar-server-copy"><span class="sidebar-server-name" id="sidebar-server-name">Home Server</span><span class="sidebar-server-status" id="sidebar-server-status">● Online</span></span>
+							<span class="sidebar-server-copy"><span class="sidebar-server-name" id="sidebar-server-name">Home Server</span><span class="sidebar-server-status is-checking" id="sidebar-server-status">Checking…</span></span>
 							<svg class="sidebar-chevron" id="sidebar-server-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"></path></svg>
 						</button>
 						<div class="sidebar-server-menu" id="sidebar-server-menu" hidden>
@@ -191,7 +191,23 @@
 						<button class="topbar-icon" type="button" aria-label="Notifications" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path></svg></button>
 					</header>
 					<div class="home-content" id="home-content">
-						<div class="home-shell-placeholder" id="shell-placeholder">
+						<div class="home-dashboard" id="home-dashboard">
+							<div class="home-state" id="home-state" aria-live="polite" hidden></div>
+							<button class="home-retry" id="home-retry" type="button" hidden>Try again</button>
+							<div class="home-hub-rows" id="home-hub-rows"></div>
+							<div class="home-empty" id="home-empty" hidden>
+								<h3>No music rows yet</h3>
+								<p>Plex has not returned any music recommendations for this server.</p>
+							</div>
+						</div>
+						<div class="home-category" id="home-category" hidden>
+							<header class="home-category-header">
+								<h2 class="home-category-title" id="home-category-title"></h2>
+							</header>
+							<div class="home-category-status" id="home-category-status" aria-live="polite" hidden></div>
+							<div class="home-category-cards" id="home-category-cards" role="list"></div>
+						</div>
+						<div class="home-shell-placeholder" id="shell-placeholder" hidden>
 							<span class="home-shell-eyebrow" id="shell-placeholder-eyebrow">HANOI</span>
 							<h2 id="shell-placeholder-title">Home is ready.</h2>
 							<p id="shell-placeholder-copy">The music surface will land here next.</p>

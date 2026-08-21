@@ -6,7 +6,20 @@ import {
 	type AppStateSnapshot,
 	type ShellView,
 } from "./app-state.ts";
-import { serverStatusLabel } from "./server-status.ts";
+import {
+	createHomeState,
+	filterMusicHomeHubs,
+	type HomeStateSnapshot,
+} from "./home-state.ts";
+import {
+	HOME_HUB_PREVIEW_SIZE,
+	homeCategoryItemMeta,
+	homeHubItemMeta,
+	homeHubItemInteraction,
+	shouldShowHomeHubSeeAll,
+} from "./home-display.ts";
+import { serverStatusClass, serverStatusLabel } from "./server-status.ts";
+import type { PlexHub, PlexHubItem } from "../bun/plex/types.ts";
 
 const $ = <T extends HTMLElement>(id: string) =>
 	document.getElementById(id) as T;
@@ -68,7 +81,20 @@ let renderedShellView: ShellView = "home";
 const appState = createAppState({
 	loadMusicSections: () => plex.getMusicSections(),
 });
+const homeState = createHomeState({
+	loadHomeHubs: () => plex.getHomeHubs(),
+});
 let observedSearchGeneration = appState.getSnapshot().searchGeneration;
+let observedHomeServer = appState.getSnapshot().selectedServer;
+type HomeCategoryView = {
+	hub: PlexHub;
+	items: PlexHubItem[];
+	status: "loading" | "ready" | "error";
+	error: string | null;
+};
+
+let homeCategoryView: HomeCategoryView | null = null;
+let homeCategoryRequest = 0;
 
 // ---- Slide + fade transition engine ----
 
@@ -154,7 +180,10 @@ async function init() {
 			appState.setSelectedServer(serverIdentifier);
 			current = "home";
 			renderHomeScreen(account, state.server?.name, state.server?.online);
-			if (serverIdentifier) void loadShellMusicSections();
+			if (serverIdentifier) {
+				void loadShellMusicSections();
+				void loadHomeHubs();
+			}
 		} else if (state.authenticated) {
 			// Match the Pen flow: an authenticated account lands on the
 			// confirmation card before choosing a media server.
@@ -247,6 +276,10 @@ $<HTMLButtonElement>("sidebar-server-selector").addEventListener("click", () => 
 $<HTMLButtonElement>("sidebar-add-server").addEventListener("click", () => {
 	closeSidebarServerMenu();
 	void startAuth();
+});
+
+$<HTMLButtonElement>("home-retry").addEventListener("click", () => {
+	void loadHomeHubs();
 });
 
 document.addEventListener("click", (event) => {
@@ -377,6 +410,7 @@ $<HTMLButtonElement>("btn-start").addEventListener("click", async () => {
 		appState.setSelectedServer(serverIdentifier);
 		renderHomeScreen(account, server?.name, server?.online);
 		void loadShellMusicSections();
+		void loadHomeHubs();
 		goTo("home");
 	} catch (error) {
 		console.error("Failed to select server:", error);
@@ -498,6 +532,10 @@ function isShellView(value: string | undefined): value is ShellView {
 }
 
 function setShellView(view: ShellView, options: { preserveSearch?: boolean } = {}): void {
+	if (view === "home" || homeCategoryView !== null) {
+		homeCategoryRequest += 1;
+		homeCategoryView = null;
+	}
 	if (view !== "search" && !options.preserveSearch) {
 		$<HTMLInputElement>("shell-search-input").value = "";
 		if (shellSearchTimer !== null) window.clearTimeout(shellSearchTimer);
@@ -518,6 +556,17 @@ function renderShellView(state: AppStateSnapshot): void {
 		else button.removeAttribute("aria-current");
 	}
 
+	if (view === "home") {
+		$("home-dashboard").removeAttribute("hidden");
+		$("shell-placeholder").setAttribute("hidden", "");
+		$("shell-search-results").setAttribute("hidden", "");
+		$("shell-search-results").replaceChildren();
+		renderHomeState(homeState.getSnapshot());
+		return;
+	}
+
+	$("home-dashboard").setAttribute("hidden", "");
+	$("home-category").setAttribute("hidden", "");
 	const copy = shellViewCopy[view];
 	$("shell-placeholder-eyebrow").textContent = copy.eyebrow;
 	$("shell-placeholder-title").textContent = copy.title;
@@ -527,6 +576,8 @@ function renderShellView(state: AppStateSnapshot): void {
 	$("shell-search-results").replaceChildren();
 }
 
+homeState.subscribe(renderHomeState);
+
 appState.subscribe((state) => {
 	if (state.searchGeneration !== observedSearchGeneration) {
 		observedSearchGeneration = state.searchGeneration;
@@ -535,6 +586,10 @@ appState.subscribe((state) => {
 			renderShellSearchStatus(`Searching for “${state.searchQuery}”…`);
 			void runShellSearch(state.searchQuery);
 		}
+	}
+	if (state.selectedServer !== observedHomeServer) {
+		observedHomeServer = state.selectedServer;
+		homeState.setServer(state.selectedServer);
 	}
 	if (state.activeView !== renderedShellView) renderShellView(state);
 	renderMusicSectionsState(state);
@@ -567,6 +622,219 @@ async function loadShellMusicSections(): Promise<void> {
 	} catch (error) {
 		console.error("Failed to load Plex music sections:", error);
 	}
+}
+
+async function loadHomeHubs(): Promise<void> {
+	try {
+		await homeState.loadHomeHubs();
+	} catch (error) {
+		console.error("Failed to load Plex home hubs:", error);
+	}
+}
+
+function renderHomeState(state: HomeStateSnapshot): void {
+	const status = $("home-state");
+	const retry = $<HTMLButtonElement>("home-retry");
+	const rows = $("home-hub-rows");
+	const empty = $("home-empty");
+	const dashboard = $("home-dashboard");
+	const category = $("home-category");
+	if (state.status === "idle") {
+		homeCategoryRequest += 1;
+		homeCategoryView = null;
+	}
+	rows.replaceChildren();
+	$("home-category-cards").replaceChildren();
+	status.classList.toggle("is-error", state.status === "error");
+	retry.setAttribute("hidden", "");
+	empty.setAttribute("hidden", "");
+	dashboard.removeAttribute("hidden");
+	category.setAttribute("hidden", "");
+
+	if (state.status === "idle") {
+		status.textContent = "";
+		status.setAttribute("hidden", "");
+		return;
+	}
+	if (state.status === "loading") {
+		status.textContent = "Loading your Plex home…";
+		status.removeAttribute("hidden");
+		return;
+	}
+	if (homeCategoryView) {
+		dashboard.setAttribute("hidden", "");
+		category.removeAttribute("hidden");
+		renderHomeCategory(homeCategoryView);
+		return;
+	}
+	if (state.status === "error") {
+		status.textContent = state.error
+			? `Couldn't load your Plex home: ${state.error}`
+			: "Couldn't load your Plex home.";
+		status.removeAttribute("hidden");
+		retry.removeAttribute("hidden");
+		return;
+	}
+
+	status.textContent = "";
+	status.setAttribute("hidden", "");
+	const hubs = filterMusicHomeHubs(state.hubs);
+	if (hubs.length === 0) {
+		empty.removeAttribute("hidden");
+		return;
+	}
+	for (const hub of hubs) rows.append(renderHomeHub(hub));
+}
+
+function renderHomeHub(hub: PlexHub): HTMLElement {
+	const row = document.createElement("section");
+	row.className = "home-hub-row";
+	if (hub.hubIdentifier) row.dataset.hubIdentifier = hub.hubIdentifier;
+
+	const heading = document.createElement("div");
+	heading.className = "home-hub-heading";
+	const title = document.createElement("h3");
+	title.className = "home-hub-title";
+	title.textContent = hub.title ?? hub.hubIdentifier ?? "Plex Home";
+	heading.append(title);
+	const hubKey = homeHubKey(hub);
+	if (shouldShowHomeHubSeeAll(hub) && hubKey) {
+		const seeAll = document.createElement("button");
+		seeAll.className = "home-hub-see-all";
+		seeAll.type = "button";
+		seeAll.textContent = "See all";
+		seeAll.addEventListener("click", () => void openHomeCategory(hub));
+		heading.append(seeAll);
+	}
+
+	const cards = document.createElement("div");
+	cards.className = "home-hub-cards";
+	cards.setAttribute("role", "list");
+	const items = (hub.Metadata ?? []).slice(0, HOME_HUB_PREVIEW_SIZE);
+	for (const item of items) cards.append(renderHomeHubItem(item));
+	row.append(heading, cards);
+	return row;
+}
+
+function homeHubKey(hub: PlexHub): string | null {
+	return hub.hubIdentifier ?? hub.key ?? null;
+}
+
+async function openHomeCategory(hub: PlexHub): Promise<void> {
+	const request = ++homeCategoryRequest;
+	homeCategoryView = { hub, items: [], status: "loading", error: null };
+	renderHomeState(homeState.getSnapshot());
+	try {
+		const rawItems = hub.hubIdentifier?.startsWith("music.recent.played.")
+			? hub.Metadata ?? []
+			: hub.key
+				? await plex.getHomeHubItems(hub.key)
+				: hub.Metadata ?? [];
+		const [filtered] = filterMusicHomeHubs([{ ...hub, Metadata: rawItems }]);
+		if (request !== homeCategoryRequest) return;
+		homeCategoryView = {
+			hub: filtered ?? { ...hub, Metadata: [] },
+			items: filtered?.Metadata ?? [],
+			status: "ready",
+			error: null,
+		};
+	} catch (error) {
+		console.error("Failed to load the full Plex Home category:", error);
+		if (request === homeCategoryRequest) {
+			homeCategoryView = {
+				hub,
+				items: [],
+				status: "error",
+				error: error instanceof Error ? error.message : "Failed to load category",
+			};
+		}
+	} finally {
+		if (request === homeCategoryRequest) renderHomeState(homeState.getSnapshot());
+	}
+}
+
+function renderHomeCategory(view: HomeCategoryView): void {
+	const title = $("home-category-title");
+	const status = $("home-category-status");
+	const cards = $("home-category-cards");
+	title.textContent = view.hub.title ?? view.hub.hubIdentifier ?? "Plex category";
+	cards.replaceChildren();
+	status.setAttribute("hidden", "");
+	if (view.status === "loading") {
+		status.textContent = "Loading…";
+		status.removeAttribute("hidden");
+		return;
+	}
+	if (view.status === "error") {
+		status.textContent = `Couldn't load this category${view.error ? `: ${view.error}` : "."}`;
+		status.removeAttribute("hidden");
+		return;
+	}
+	if (view.items.length === 0) {
+		status.textContent = "No items in this category.";
+		status.removeAttribute("hidden");
+		return;
+	}
+	for (const item of view.items) cards.append(renderHomeHubItem(item, true));
+}
+
+function renderHomeHubItem(item: PlexHubItem, category = false): HTMLElement {
+	const card = document.createElement("article");
+	card.className = category ? "home-hub-card home-category-card" : "home-hub-card";
+	card.setAttribute("role", "listitem");
+	const interaction = homeHubItemInteraction(item);
+	if (interaction) card.classList.add(`home-hub-card-${interaction}`);
+
+	const art = document.createElement("div");
+	art.className = "home-hub-card-art";
+	const fallback = document.createElement("span");
+	fallback.className = "home-hub-card-art-fallback";
+	fallback.textContent = item.title.charAt(0).toUpperCase() || "♪";
+	art.append(fallback);
+
+	const imagePath = item.thumb ?? item.composite ?? item.art;
+	if (imagePath) {
+		const image = document.createElement("img");
+		image.alt = "";
+		image.hidden = true;
+		image.onload = () => {
+			fallback.hidden = true;
+			image.hidden = false;
+		};
+		image.onerror = () => {
+			image.hidden = true;
+			fallback.hidden = false;
+		};
+		art.append(image);
+		void plex.imageUrl(imagePath).then((url) => {
+			if (url && image.isConnected) image.src = url;
+		}).catch(() => {
+			if (image.isConnected) {
+				image.hidden = true;
+				fallback.hidden = false;
+			}
+		});
+	}
+	if (interaction === "track") {
+		const play = document.createElement("button");
+		play.className = "home-hub-card-play";
+		play.type = "button";
+		play.setAttribute("aria-label", `Play ${item.title}`);
+		play.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"></path></svg>';
+		art.append(play);
+	}
+
+	const title = document.createElement("span");
+	title.className = "home-hub-card-title";
+	title.textContent = item.title;
+	const meta = document.createElement("span");
+	meta.className = "home-hub-card-meta";
+	meta.textContent = category ? homeCategoryItemMeta(item) : homeHubItemMeta(item);
+	const text = document.createElement("div");
+	text.className = "home-hub-card-text";
+	text.append(title, meta);
+	card.append(art, text);
+	return card;
 }
 
 function renderShellSearchStatus(message: string): void {
@@ -732,7 +1000,7 @@ function renderSidebarServerOptions(availableServers: Server[]): void {
 		name.textContent = server.name;
 		const status = document.createElement("span");
 		status.className = "sidebar-server-option-status";
-		status.classList.toggle("is-online", server.online !== false);
+		status.classList.add(serverStatusClass(server.online));
 		status.textContent = serverStatusLabel(server.online);
 		copy.append(name, status);
 		option.append(copy);
@@ -758,6 +1026,7 @@ async function selectSidebarServer(server: Server): Promise<void> {
 		appState.setSelectedServer(server.clientIdentifier);
 		renderHomeScreen(account, server.name, server.online);
 		void loadShellMusicSections();
+		void loadHomeHubs();
 		closeSidebarServerMenu();
 	} catch (error) {
 		const options = $("sidebar-server-options");
@@ -825,7 +1094,10 @@ function renderHomeScreen(acct?: Account | null, serverName?: string, serverOnli
 	$("sidebar-user-name").textContent = name;
 	$("sidebar-avatar").textContent = initials;
 	$("sidebar-server-name").textContent = resolvedServerName || "your server";
-	$("sidebar-server-status").textContent = serverStatusLabel(resolvedServerOnline);
+	const status = $("sidebar-server-status");
+	status.classList.remove("is-online", "is-offline", "is-checking");
+	status.classList.add(serverStatusClass(resolvedServerOnline));
+	status.textContent = serverStatusLabel(resolvedServerOnline);
 }
 
 // Initial route: hide everything not current (handled above in init()).

@@ -19,3 +19,16 @@ export function findPersistedServer(
 		discovered.find((server) => server.name === persisted.name)
 	);
 }
+
+/** Whether discovery found a different server endpoint or per-server token. */
+export function savedServerNeedsRefresh(
+	persisted: PersistedServerReference & { token?: string },
+	discovered: PlexServerInfo,
+): boolean {
+	return (
+		persisted.clientIdentifier !== discovered.clientIdentifier ||
+		persisted.name !== discovered.name ||
+		persisted.url !== discovered.url ||
+		persisted.token !== discovered.token
+	);
+}

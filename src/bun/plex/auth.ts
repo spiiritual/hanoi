@@ -16,6 +16,12 @@ export interface PlexConnection {
 	uri: string;
 	/** Picks the best connection (local preferred). */
 	local: boolean;
+	protocol?: string;
+	address?: string;
+	port?: number;
+	/** Relay connections are a last-resort fallback. */
+	relay?: boolean;
+	IPv6?: boolean;
 }
 
 export interface PlexServerResource {
@@ -135,13 +141,16 @@ export async function discoverServers(
 	clientIdentifier: string,
 	plexTvUrl: string = DEFAULT_PLEX_TV_URL,
 ): Promise<PlexServerResource[]> {
-	const res = await fetch(`${plexTvUrl}/api/v2/resources?includeHttps=1`, {
-		headers: {
-			Accept: "application/json",
-			"X-Plex-Token": token,
-			"X-Plex-Client-Identifier": clientIdentifier,
+	const res = await fetch(
+		`${plexTvUrl}/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1`,
+		{
+			headers: {
+				Accept: "application/json",
+				"X-Plex-Token": token,
+				"X-Plex-Client-Identifier": clientIdentifier,
+			},
 		},
-	});
+	);
 	if (!res.ok) {
 		throw new Error(`Failed to discover Plex servers: ${res.status} ${res.statusText}`);
 	}
@@ -152,8 +161,25 @@ export async function discoverServers(
 	return resources.filter((s) => s.owned && s.provides?.includes("server"));
 }
 
-/** Best base URL for a server: local connection first, then first connection. */
+/**
+ * Order server connections by the policy Plex clients need here: local direct
+ * first, then other direct connections (such as Tailscale), then relay.
+ * Preserve Plex's order within each tier because it already reflects the
+ * server's advertised preference.
+ */
+export function connectionCandidates(resource: PlexServerResource): PlexConnection[] {
+	return (resource.connections ?? [])
+		.map((connection, index) => ({ connection, index }))
+		.filter(({ connection }) => connection.uri.length > 0)
+		.sort((a, b) => {
+			const priority = (connection: PlexConnection): number =>
+				connection.relay ? 2 : connection.local ? 0 : 1;
+			return priority(a.connection) - priority(b.connection) || a.index - b.index;
+		})
+		.map(({ connection }) => connection);
+}
+
+/** First advertised candidate, used when every reachability probe fails. */
 export function serverUrl(resource: PlexServerResource): string {
-	const local = resource.connections?.find((c) => c.local);
-	return local?.uri ?? resource.connections?.[0]?.uri ?? "";
+	return connectionCandidates(resource)[0]?.uri ?? "";
 }

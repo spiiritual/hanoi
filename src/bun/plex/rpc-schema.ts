@@ -10,6 +10,7 @@ import type {
 	PlexAlbum,
 	PlexArtist,
 	PlexHubItem,
+	PlexHub,
 	PlexPlaylist,
 	PlexSection,
 	PlexServerInfo,
@@ -88,6 +89,11 @@ export type PlexRpc = {
 				};
 			};
 			// home
+			getHomeHubs: {
+				params: { identifiers?: string[] };
+				response: PlexHub[];
+			};
+			getHomeHubItems: { params: { key: string }; response: PlexHubItem[] };
 			getRecentlyPlayed: { params: void; response: PlexHubItem[] };
 			getMostPlayed: { params: { sinceMs?: number }; response: PlexHubItem[] };
 			// search
