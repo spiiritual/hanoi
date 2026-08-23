@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PlexPlaylist, PlexTrack } from "../../bun/plex/types.ts";
 import { Icon } from "../components/Icon.tsx";
 import { plex } from "../plex.ts";
+import { ArtworkImage } from "../ArtworkImage.tsx";
 import { playerState } from "../view-state.ts";
 
 function formatTrackDuration(duration?: number): string {
@@ -30,33 +31,15 @@ function trackSubtitle(track: PlexTrack): string {
   );
 }
 
-function usePlaylistArtwork(path?: string): [string | null, () => void] {
-  const [image, setImage] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    setImage(null);
-    if (!path) return () => undefined;
-    void plex
-      .imageUrl(path)
-      .then((url) => {
-        if (active) setImage(url);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [path]);
-
-  return [image, () => setImage(null)];
-}
-
 function PlaylistArtwork({ playlist, className }: { playlist: PlexPlaylist; className: string }) {
-  const [image, clearImage] = usePlaylistArtwork(playlist.composite);
   return (
     <div className={className} aria-label={`${playlist.title} cover art`}>
-      <span hidden={Boolean(image)}>{playlist.title.charAt(0).toUpperCase() || "♪"}</span>
-      {image && <img src={image} alt={`${playlist.title} cover`} onError={clearImage} />}
+      <ArtworkImage
+        source={playlist.composite ? { kind: "server", path: playlist.composite } : null}
+        priority
+        alt={`${playlist.title} cover`}
+        fallback={playlist.title.charAt(0).toUpperCase() || "♪"}
+      />
     </div>
   );
 }
@@ -233,46 +216,47 @@ export function PlaylistDetail({ ratingKey }: { ratingKey: string }) {
         {tracks.length === 0 ? (
           <p className="album-track-empty">This playlist has no tracks.</p>
         ) : (
-          <div className="album-track-rows" role="list">
+          <ul className="album-track-rows">
             {tracks.map((track, index) => {
               const isCurrentTrack = player.currentTrack?.ratingKey === track.ratingKey;
               const isTrackPlaying = isCurrentTrack && player.status === "playing";
               return (
-                <button
-                  className={`album-track-row${isCurrentTrack ? " is-playing" : ""}`}
-                  key={`${track.ratingKey}-${track.index ?? track.title}`}
-                  type="button"
-                  aria-current={isCurrentTrack ? "true" : undefined}
-                  aria-label={`${isTrackPlaying ? "Pause" : "Play"} ${track.title}`}
-                  onClick={() => playTrack(track, index)}
-                >
-                  <span className="album-track-number">
-                    <span className="album-track-index">{track.index ?? index + 1}</span>
-                    <span className="album-track-play" aria-hidden="true">
-                      {isTrackPlaying ? (
-                        <span className="album-track-spectrum">
-                          <span />
-                          <span />
-                          <span />
-                        </span>
-                      ) : (
-                        <Icon>
-                          <path d="m8 5 11 7-11 7z" />
-                        </Icon>
-                      )}
+                <li key={track.ratingKey}>
+                  <button
+                    className={`album-track-row${isCurrentTrack ? " is-playing" : ""}`}
+                    type="button"
+                    aria-current={isCurrentTrack ? "true" : undefined}
+                    aria-label={`${isTrackPlaying ? "Pause" : "Play"} ${track.title}`}
+                    onClick={() => playTrack(track, index)}
+                  >
+                    <span className="album-track-number">
+                      <span className="album-track-index">{track.index ?? index + 1}</span>
+                      <span className="album-track-play" aria-hidden="true">
+                        {isTrackPlaying ? (
+                          <span className="album-track-spectrum">
+                            <span />
+                            <span />
+                            <span />
+                          </span>
+                        ) : (
+                          <Icon>
+                            <path d="m8 5 11 7-11 7z" />
+                          </Icon>
+                        )}
+                      </span>
                     </span>
-                  </span>
-                  <div className="album-track-copy">
-                    <span className="album-track-title">{track.title}</span>
-                    <span className="album-track-artist">{trackSubtitle(track)}</span>
-                  </div>
-                  <span className="album-track-duration">
-                    {formatTrackDuration(track.duration)}
-                  </span>
-                </button>
+                    <div className="album-track-copy">
+                      <span className="album-track-title">{track.title}</span>
+                      <span className="album-track-artist">{trackSubtitle(track)}</span>
+                    </div>
+                    <span className="album-track-duration">
+                      {formatTrackDuration(track.duration)}
+                    </span>
+                  </button>
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
       </section>
     </div>

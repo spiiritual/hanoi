@@ -119,6 +119,7 @@
 
 .artist-grid {
   display: grid;
+  list-style: none;
   grid-template-columns: repeat(auto-fill, 150px);
   align-content: start;
   gap: 24px 12px;
@@ -377,6 +378,7 @@
 
 .artist-song-list {
   display: flex;
+  list-style: none;
   min-width: 0;
   flex-direction: column;
   gap: 4px;
@@ -464,6 +466,7 @@
 
 .artist-albums-row {
   display: grid;
+  list-style: none;
   grid-auto-columns: 150px;
   grid-auto-flow: column;
   gap: 12px;

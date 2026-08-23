@@ -37,6 +37,7 @@
 
 .home-category-cards {
   display: grid;
+  list-style: none;
   grid-template-columns: repeat(auto-fill, 150px);
   gap: 12px;
   min-width: 0;
@@ -125,6 +126,7 @@
 
 .home-hub-cards {
   display: grid;
+  list-style: none;
   grid-auto-columns: 150px;
   grid-auto-flow: column;
   gap: 12px;

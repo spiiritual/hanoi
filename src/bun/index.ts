@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { BrowserView, BrowserWindow, Utils } from "electrobun/main";
 import type { PlexRpc, ServerViewSummary } from "./plex/rpc-schema.ts";
 import { buildAuthUrl, createPin, waitForPin, type PlexPin } from "./plex/auth.ts";
@@ -10,15 +11,19 @@ import {
   getPlexAccount,
 } from "./plex/client.ts";
 import { findPersistedServer, savedServerNeedsRefresh } from "./plex/server-selection.ts";
-import {
-  accountImageUrl as buildAccountImageUrl,
-  imageUrl as buildImageUrl,
-  streamUrl as resolveStreamUrl,
-  transcodedImageUrl as buildTranscodedImageUrl,
-} from "./plex/url.ts";
+import { streamUrl as resolveStreamUrl } from "./plex/url.ts";
 import type { PlexAccount, PlexServerInfo, PlexTrack } from "./plex/types.ts";
+import { ArtworkCache } from "./plex/artwork-cache.ts";
+import type { ArtworkVariant } from "./plex/artwork-types.ts";
+import {
+  artworkNamespace,
+  createArtworkFetcher,
+  isSameArtworkSession,
+  toArtworkRpcResult,
+} from "./plex/artwork-fetcher.ts";
 
 let config = loadConfig();
+const artworkCache = new ArtworkCache(join(Utils.paths.userCache, "artwork"));
 let client: PlexClient | null =
   config?.server && config.token
     ? new PlexClient({
@@ -51,6 +56,86 @@ function errorMessage(error: unknown): string {
 function requireClient(): PlexClient {
   if (!client) throw new Error("Not connected to a Plex server");
   return client;
+}
+
+function artworkNamespaceForConfig(cfg: PlexConfig) {
+  if (!cfg.server) return null;
+  return artworkNamespace({
+    accountUsername: cfg.account?.username,
+    fallbackAccountId: cfg.clientIdentifier,
+    serverClientIdentifier: cfg.server.clientIdentifier,
+    serverUrl: cfg.server.url,
+  });
+}
+
+function accountArtworkNamespaceForConfig(cfg: PlexConfig) {
+  return artworkNamespace({
+    accountUsername: cfg.account?.username,
+    fallbackAccountId: cfg.clientIdentifier,
+    serverClientIdentifier: "plex-account",
+    serverUrl: "https://plex.tv",
+  });
+}
+
+function artworkSessionSnapshot() {
+  const currentConfig = config;
+  return {
+    config: currentConfig,
+    client,
+    namespace: currentConfig ? artworkNamespaceForConfig(currentConfig) : null,
+  };
+}
+
+async function getArtwork(params: { path: string; variant?: ArtworkVariant }) {
+  if (typeof params.path !== "string" || !params.path.trim()) return null;
+  const session = artworkSessionSnapshot();
+  const cfg = session.config;
+  const activeClient = session.client;
+  const namespace = session.namespace;
+  if (!cfg?.token || !cfg.server || !activeClient || !namespace) return null;
+  const request = { namespace, source: params.path, variant: params.variant };
+  const cached = await artworkCache.get(request);
+  if (!isSameArtworkSession(session, artworkSessionSnapshot())) return null;
+  const entry = await artworkCache.getOrFetch(
+    request,
+    createArtworkFetcher({ baseUrl: activeClient.baseUrl, token: activeClient.token }),
+  );
+  if (!isSameArtworkSession(session, artworkSessionSnapshot())) return null;
+  return toArtworkRpcResult(entry, cached ? "hit" : "miss");
+}
+
+function accountArtworkSource(path: string): string {
+  const input = path.trim();
+  if (!/^https?:\/\//i.test(input)) return input;
+  try {
+    const url = new URL(input);
+    if (url.hostname.toLowerCase() === "plex.tv") {
+      return `${url.pathname}${url.search}`;
+    }
+  } catch {
+    return "";
+  }
+  return input;
+}
+
+async function getAccountArtwork(params: { variant?: ArtworkVariant }) {
+  const session = artworkSessionSnapshot();
+  const cfg = session.config;
+  if (!cfg?.token) return null;
+  const account = cfg.account?.thumb ? cfg.account : await hydrateAccount(cfg.token);
+  if (config?.token !== cfg.token || !account.thumb) return null;
+  const source = accountArtworkSource(account.thumb);
+  const namespace = accountArtworkNamespaceForConfig(cfg);
+  if (!source) return null;
+  const request = { namespace, source, variant: params.variant };
+  const cached = await artworkCache.get(request);
+  if (config?.token !== cfg.token) return null;
+  const entry = await artworkCache.getOrFetch(
+    request,
+    createArtworkFetcher({ baseUrl: "https://plex.tv", token: cfg.token }),
+  );
+  if (config?.token !== cfg.token) return null;
+  return toArtworkRpcResult(entry, cached ? "hit" : "miss");
 }
 
 async function beginAuth(): Promise<{ authUrl: string; pinCode: string }> {
@@ -240,8 +325,13 @@ function syncActiveServer(cfg: PlexConfig, selected: PlexServerInfo): void {
   }
 }
 
-function disconnect(): void {
+async function disconnect(): Promise<void> {
   cancelAuth();
+  const session = artworkSessionSnapshot();
+  if (session.namespace) {
+    await artworkCache.clearNamespace(session.namespace);
+    if (!isSameArtworkSession(session, artworkSessionSnapshot())) return;
+  }
   client = null;
   config = null;
   deleteConfig();
@@ -297,18 +387,11 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
         };
       },
       disconnect() {
-        disconnect();
+        return disconnect();
       },
       async getAccount() {
         if (!config?.token) throw new Error("Not authenticated");
         return hydrateAccount(config.token);
-      },
-      async getAccountAvatarUrl() {
-        const cfg = config;
-        if (!cfg?.token) return null;
-        const account = cfg.account?.thumb ? cfg.account : await hydrateAccount(cfg.token);
-        if (config?.token !== cfg.token) return null;
-        return buildAccountImageUrl(account.thumb, cfg.token);
       },
       async getServers() {
         const cfg = config;
@@ -374,18 +457,11 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
         const track = items.find((i) => i.type === "track");
         return resolveStreamUrl({ baseUrl: c.baseUrl, token: c.token }, track);
       },
-      imageUrl(params) {
-        const c = requireClient();
-        return buildImageUrl({ baseUrl: c.baseUrl, token: c.token }, params.path);
+      getArtwork(params) {
+        return getArtwork(params);
       },
-      transcodedImageUrl(params) {
-        const c = requireClient();
-        return buildTranscodedImageUrl(
-          { baseUrl: c.baseUrl, token: c.token },
-          params.path,
-          params.width,
-          params.height,
-        );
+      getAccountArtwork(params) {
+        return getAccountArtwork(params);
       },
       scrobble(params) {
         return requireClient().scrobble(params.key);
@@ -410,6 +486,10 @@ new BrowserWindow({
     y: 200,
   },
   rpc,
+});
+
+process.once("exit", () => {
+  artworkCache.dispose();
 });
 
 console.log("Hanoi started");

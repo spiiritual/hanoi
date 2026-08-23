@@ -1,6 +1,6 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
+import { ArtworkImage } from "../ArtworkImage.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { plex } from "../plex.ts";
 import { playerState } from "../view-state.ts";
 
 export function NowPlaying() {
@@ -9,24 +9,7 @@ export function NowPlaying() {
     playerState.getSnapshot,
     playerState.getSnapshot,
   );
-  const [image, setImage] = useState<string | null>(null);
   const track = player.currentTrack;
-
-  useEffect(() => {
-    let active = true;
-    setImage(null);
-    if (track?.thumb) {
-      void plex
-        .imageUrl(track.thumb)
-        .then((url) => {
-          if (active) setImage(url);
-        })
-        .catch(() => undefined);
-    }
-    return () => {
-      active = false;
-    };
-  }, [track?.ratingKey, track?.thumb]);
 
   const artist = track?.grandparentTitle ?? track?.parentTitle;
   const meta = player.error
@@ -38,8 +21,12 @@ export function NowPlaying() {
   return (
     <div className="player-now-playing">
       <div className="player-art" aria-hidden="true">
-        <span hidden={Boolean(image)}>{track?.title.charAt(0).toUpperCase() || "♪"}</span>
-        {image && <img src={image} alt="" onError={() => setImage(null)} />}
+        <ArtworkImage
+          source={track?.thumb ? { kind: "server", path: track.thumb } : null}
+          priority
+          alt=""
+          fallback={track?.title.charAt(0).toUpperCase() || "♪"}
+        />
       </div>
       <div className="player-now-copy" aria-live="polite">
         <span className="player-track-name">{track?.title ?? "Nothing playing"}</span>

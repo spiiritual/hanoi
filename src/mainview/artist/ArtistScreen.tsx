@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PlexAlbum, PlexArtist, PlexSection, PlexTrack } from "../../bun/plex/types.ts";
 import { Icon } from "../components/Icon.tsx";
 import type { ShellView } from "../app-state.ts";
 import { plex } from "../plex.ts";
+import { ArtworkImage } from "../ArtworkImage.tsx";
 import { playerState } from "../view-state.ts";
 import { MediaCard } from "../home/HomeContent.tsx";
 
@@ -18,47 +19,37 @@ function formatCount(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
 }
 
-function useArtwork(path?: string): [string | null, () => void] {
-  const [image, setImage] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    setImage(null);
-    if (!path) return () => undefined;
-    void plex
-      .imageUrl(path)
-      .then((url) => {
-        if (active) setImage(url);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [path]);
-
-  return [image, () => setImage(null)];
-}
+const libraryTabs: Array<[ShellView, string]> = [
+  ["albums", "Albums"],
+  ["artists", "Artists"],
+  ["songs", "Songs"],
+  ["playlists", "Playlists"],
+];
 
 function ArtistArtwork({ artist }: { artist: PlexArtist }) {
-  const [image, clearImage] = useArtwork(artist["thumb"] ?? artist["art"]);
+  const path = artist["thumb"] ?? artist["art"];
   return (
     <div className="artist-detail-avatar" aria-label={`${artist.title} artwork`}>
-      <span className="artist-detail-avatar-fallback" hidden={Boolean(image)}>
-        {artist.title.charAt(0).toUpperCase() || "♪"}
-      </span>
-      {image && <img src={image} alt={`${artist.title} artwork`} onError={clearImage} />}
+      <ArtworkImage
+        source={path ? { kind: "server", path } : null}
+        priority
+        alt={`${artist.title} artwork`}
+        fallback={artist.title.charAt(0).toUpperCase() || "♪"}
+        fallbackClassName="artist-detail-avatar-fallback"
+      />
     </div>
   );
 }
 
 function TrackArtwork({ track }: { track: PlexTrack }) {
-  const [image, clearImage] = useArtwork(track.thumb);
   return (
     <div className="artist-song-art" aria-hidden="true">
-      <span className="artist-song-art-fallback" hidden={Boolean(image)}>
-        {track.title.charAt(0).toUpperCase() || "♪"}
-      </span>
-      {image && <img src={image} alt="" onError={clearImage} />}
+      <ArtworkImage
+        source={track.thumb ? { kind: "server", path: track.thumb } : null}
+        alt=""
+        fallback={track.title.charAt(0).toUpperCase() || "♪"}
+        fallbackClassName="artist-song-art-fallback"
+      />
     </div>
   );
 }
@@ -236,30 +227,30 @@ export function ArtistDetail({
         {topTracks.length === 0 ? (
           <p className="artist-empty">This artist has no songs.</p>
         ) : (
-          <div className="artist-song-list" role="list">
+          <ul className="artist-song-list">
             {visibleTopTracks.map((track, index) => {
               const isCurrentTrack = player.currentTrack?.ratingKey === track.ratingKey;
               return (
-                <button
-                  className={`artist-song-row${isCurrentTrack ? " is-playing" : ""}`}
-                  key={`${track.ratingKey}-${index}`}
-                  type="button"
-                  role="listitem"
-                  aria-current={isCurrentTrack ? "true" : undefined}
-                  onClick={() => playTrack(track, index)}
-                >
-                  <TrackArtwork track={track} />
-                  <span className="artist-song-copy">
-                    <span className="artist-song-title">{track.title}</span>
-                    <span className="artist-song-meta">{trackMeta(track)}</span>
-                  </span>
-                  <span className="artist-song-duration">
-                    {formatTrackDuration(track.duration)}
-                  </span>
-                </button>
+                <li key={track.ratingKey}>
+                  <button
+                    className={`artist-song-row${isCurrentTrack ? " is-playing" : ""}`}
+                    type="button"
+                    aria-current={isCurrentTrack ? "true" : undefined}
+                    onClick={() => playTrack(track, index)}
+                  >
+                    <TrackArtwork track={track} />
+                    <span className="artist-song-copy">
+                      <span className="artist-song-title">{track.title}</span>
+                      <span className="artist-song-meta">{trackMeta(track)}</span>
+                    </span>
+                    <span className="artist-song-duration">
+                      {formatTrackDuration(track.duration)}
+                    </span>
+                  </button>
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
       </section>
 
@@ -272,7 +263,7 @@ export function ArtistDetail({
         {albums.length === 0 ? (
           <p className="artist-empty">This artist has no albums.</p>
         ) : (
-          <div className="artist-albums-row" role="list">
+          <ul className="artist-albums-row">
             {albums.map((album) => (
               <MediaCard
                 item={album}
@@ -284,7 +275,7 @@ export function ArtistDetail({
                 key={album.ratingKey}
               />
             ))}
-          </div>
+          </ul>
         )}
       </section>
     </div>
@@ -298,9 +289,9 @@ function ArtistCard({
   artist: PlexArtist;
   onArtist: (artist: PlexArtist) => void;
 }) {
-  const [image, clearImage] = useArtwork(artist["thumb"] ?? artist["art"]);
+  const path = artist["thumb"] ?? artist["art"];
   return (
-    <article className="artist-card" role="listitem">
+    <li className="artist-card">
       <button
         className="artist-card-button"
         type="button"
@@ -308,17 +299,19 @@ function ArtistCard({
         onClick={() => onArtist(artist)}
       >
         <div className="artist-card-avatar">
-          <span className="artist-card-avatar-fallback" hidden={Boolean(image)}>
-            {artist.title.charAt(0).toUpperCase() || "♪"}
-          </span>
-          {image && <img src={image} alt="" onError={clearImage} />}
+          <ArtworkImage
+            source={path ? { kind: "server", path } : null}
+            alt=""
+            fallback={artist.title.charAt(0).toUpperCase() || "♪"}
+            fallbackClassName="artist-card-avatar-fallback"
+          />
         </div>
         <span className="artist-card-copy">
           <span className="artist-card-title">{artist.title}</span>
           <span className="artist-card-meta">Artist</span>
         </span>
       </button>
-    </article>
+    </li>
   );
 }
 
@@ -339,11 +332,6 @@ export function ArtistLibrary({
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
-  const sectionKeySignature = useMemo(
-    () => sections.map((section) => section.key).join(","),
-    [sections],
-  );
-
   useEffect(() => {
     let active = true;
     if (sectionsStatus !== "ready") {
@@ -385,14 +373,7 @@ export function ArtistLibrary({
     return () => {
       active = false;
     };
-  }, [sectionKeySignature, sectionsStatus, sectionsError, reload]);
-
-  const tabs: Array<[ShellView, string]> = [
-    ["albums", "Albums"],
-    ["artists", "Artists"],
-    ["songs", "Songs"],
-    ["playlists", "Playlists"],
-  ];
+  }, [sections, sectionsStatus, sectionsError, reload]);
   const message =
     status === "loading" || sectionsStatus === "loading"
       ? "Loading artists…"
@@ -405,7 +386,7 @@ export function ArtistLibrary({
   return (
     <div className="artist-library" id="artist-library">
       <div className="artist-filter-tabs" aria-label="Library views">
-        {tabs.map(([view, label]) => (
+        {libraryTabs.map(([view, label]) => (
           <button
             className={`artist-filter-tab${view === "artists" ? " is-active" : ""}`}
             type="button"
@@ -441,12 +422,12 @@ export function ArtistLibrary({
             )}
           </div>
         )}
-        <div className="artist-grid" id="artist-grid" role="list">
+        <ul className="artist-grid" id="artist-grid">
           {status === "ready" &&
             artists.map((artist) => (
               <ArtistCard artist={artist} onArtist={onArtist} key={artist.ratingKey} />
             ))}
-        </div>
+        </ul>
       </section>
     </div>
   );

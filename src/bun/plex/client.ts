@@ -682,23 +682,6 @@ export class PlexClient {
     );
   }
 
-  /** Resolve a relative Plex image path (e.g. `thumb`, `art`) to a full URL with the token. */
-  imageUrl(path: string | undefined | null): string | null {
-    if (!path) return null;
-    if (/^https?:\/\//.test(path)) return path;
-    return `${this._baseUrl}${path}${path.includes("?") ? "&" : "?"}X-Plex-Token=${this._token}`;
-  }
-
-  /** Transcode a Plex image path to a fixed-size image via `/photo/:/transcode`. */
-  transcodedImageUrl(
-    path: string | undefined | null,
-    width: number,
-    height: number,
-  ): string | null {
-    if (!path) return null;
-    return `${this._baseUrl}/photo/:/transcode?width=${width}&height=${height}&url=${encodeURIComponent(path)}&X-Plex-Token=${this._token}`;
-  }
-
   /** Server base URL; used to build media URLs (e.g. streamUrl). */
   get baseUrl(): string {
     return this._baseUrl;

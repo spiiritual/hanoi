@@ -2,8 +2,8 @@
  * Electrobun RPC schema for the Plex client. Both sides import this file:
  * the bun side registers request handlers (`BrowserView.defineRPC`), the
  * view side calls them (`Electroview.defineRPC` + `new Electroview`).
- * The token never crosses into the renderer — the view only ever receives
- * data and URL strings.
+ * The token never crosses into the renderer for artwork — the view receives
+ * artwork bytes; the authenticated stream URL remains available for audio.
  */
 import type {
   PlexAccount,
@@ -17,6 +17,7 @@ import type {
   PlexTrack,
 } from "./types.ts";
 import type { BrowseOptions } from "./client.ts";
+import type { ArtworkRpcResult, ArtworkVariant } from "./artwork-types.ts";
 
 /**
  * Server info as seen by the view — the per-server token never leaves the
@@ -47,7 +48,6 @@ export type PlexRpc = {
       disconnect: { params: void; response: void };
       // account + servers
       getAccount: { params: void; response: PlexAccount };
-      getAccountAvatarUrl: { params: void; response: string | null };
       getServers: { params: void; response: ServerViewSummary[] };
       checkServerStatus: { params: void; response: boolean };
       // browse
@@ -104,10 +104,14 @@ export type PlexRpc = {
       };
       // playback + media URLs (token stays in the main process)
       streamUrl: { params: { ratingKey: string }; response: string | null };
-      imageUrl: { params: { path: string }; response: string | null };
-      transcodedImageUrl: {
-        params: { path: string; width: number; height: number };
-        response: string | null;
+      getArtwork: {
+        params: { path: string; variant?: ArtworkVariant };
+        response: ArtworkRpcResult;
+      };
+      /** Account avatar bytes; the account path and token stay in the main process. */
+      getAccountArtwork: {
+        params: { variant?: ArtworkVariant };
+        response: ArtworkRpcResult;
       };
       scrobble: { params: { key: string }; response: void };
       // system helpers (main process only)

@@ -1,6 +1,7 @@
 import { Electroview } from "electrobun/view";
 import type { PlexRpc } from "../bun/plex/rpc-schema.ts";
 import type { BrowseOptions } from "../bun/plex/client.ts";
+import type { ArtworkVariant } from "../bun/plex/artwork-types.ts";
 
 const rpc = Electroview.defineRPC<PlexRpc>({
   maxRequestTime: 60_000,
@@ -21,7 +22,6 @@ export const plex = {
   disconnect: () => rpc.request.disconnect(),
   // account + servers
   getAccount: () => rpc.request.getAccount(),
-  getAccountAvatarUrl: () => rpc.request.getAccountAvatarUrl(),
   getServers: () => rpc.request.getServers(),
   checkServerStatus: () => rpc.request.checkServerStatus(),
   // browse
@@ -46,9 +46,8 @@ export const plex = {
   search: (query: string) => rpc.request.search({ query }),
   // playback + media URLs
   streamUrl: (ratingKey: string) => rpc.request.streamUrl({ ratingKey }),
-  imageUrl: (path: string) => rpc.request.imageUrl({ path }),
-  transcodedImageUrl: (path: string, width: number, height: number) =>
-    rpc.request.transcodedImageUrl({ path, width, height }),
+  getArtwork: (path: string, variant?: ArtworkVariant) => rpc.request.getArtwork({ path, variant }),
+  getAccountArtwork: (variant?: ArtworkVariant) => rpc.request.getAccountArtwork({ variant }),
   scrobble: (key: string) => rpc.request.scrobble({ key }),
   // system helpers
   openExternal: (url: string) => rpc.request.openExternal({ url }),

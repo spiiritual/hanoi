@@ -76,6 +76,7 @@
 
 .album-grid {
   display: grid;
+  list-style: none;
   grid-template-columns: repeat(auto-fill, 150px);
   align-content: start;
   gap: 24px 12px;
@@ -297,6 +298,7 @@
 
 .album-track-rows {
   display: flex;
+  list-style: none;
   min-width: 0;
   flex-direction: column;
 }

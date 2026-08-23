@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { plex } from "../plex.ts";
+import { ArtworkImage } from "../ArtworkImage.tsx";
 import {
   filterMusicHomeHubs,
   HOME_HUB_PREVIEW_SIZE,
@@ -36,7 +35,7 @@ export function MediaCard({
   onPlaylist?: (item: PlexHubItem) => void;
   meta?: string;
 }) {
-  const [image, setImage] = useState<string | null>(null);
+  const path = item.thumb ?? item.composite ?? item.art;
   const interaction = homeHubItemInteraction(item);
   const canOpenAlbum = item.type === "album" && Boolean(onAlbum);
   const canOpenArtist = item.type === "artist" && Boolean(onArtist);
@@ -45,30 +44,15 @@ export function MediaCard({
   const openArtist = () => onArtist?.(item);
   const openPlaylist = () => onPlaylist?.(item);
 
-  useEffect(() => {
-    let active = true;
-    const path = item.thumb ?? item.composite ?? item.art;
-    setImage(null);
-    if (path) {
-      void plex
-        .imageUrl(path)
-        .then((url) => {
-          if (active) setImage(url);
-        })
-        .catch(() => undefined);
-    }
-    return () => {
-      active = false;
-    };
-  }, [item]);
-
   const cardContent = (
     <>
       <div className="home-hub-card-art">
-        <span className="home-hub-card-art-fallback" hidden={Boolean(image)}>
-          {item.title.charAt(0).toUpperCase() || "♪"}
-        </span>
-        {image && <img src={image} alt="" onError={() => setImage(null)} />}
+        <ArtworkImage
+          source={path ? { kind: "server", path } : null}
+          alt=""
+          fallback={item.title.charAt(0).toUpperCase() || "♪"}
+          fallbackClassName="home-hub-card-art-fallback"
+        />
         {interaction === "track" && (
           <button
             className="home-hub-card-play"
@@ -96,9 +80,8 @@ export function MediaCard({
   );
 
   return (
-    <article
+    <li
       className={`home-hub-card${category ? " home-category-card" : ""} home-hub-card-${interaction}`}
-      role="listitem"
     >
       {canOpenAlbum ? (
         <button
@@ -130,7 +113,7 @@ export function MediaCard({
       ) : (
         cardContent
       )}
-    </article>
+    </li>
   );
 }
 
@@ -166,7 +149,7 @@ export function HomeCategory({
             ? `Couldn't load this category${view.error ? `: ${view.error}` : "."}`
             : "No items in this category."}
       </div>
-      <div className="home-category-cards" id="home-category-cards" role="list">
+      <ul className="home-category-cards" id="home-category-cards">
         {view.status === "ready" &&
           view.items.map((item) => (
             <MediaCard
@@ -179,7 +162,7 @@ export function HomeCategory({
               key={`${item.ratingKey ?? item.title}`}
             />
           ))}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -246,7 +229,7 @@ export function HomeDashboard({
                   </button>
                 )}
               </div>
-              <div className="home-hub-cards" role="list">
+              <ul className="home-hub-cards">
                 {(hub.Metadata ?? []).slice(0, HOME_HUB_PREVIEW_SIZE).map((item) => (
                   <MediaCard
                     item={item}
@@ -257,7 +240,7 @@ export function HomeDashboard({
                     key={`${item.ratingKey ?? item.title}`}
                   />
                 ))}
-              </div>
+              </ul>
             </section>
           ))}
       </div>
