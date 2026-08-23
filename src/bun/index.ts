@@ -1,15 +1,28 @@
 import { randomUUID } from "node:crypto";
 import { BrowserView, BrowserWindow, Utils } from "electrobun/main";
 import type { PlexRpc, ServerViewSummary } from "./plex/rpc-schema.ts";
-import { buildAuthUrl, createPin, waitForPin, type PlexPin } from "./plex/auth.ts";
-import { deleteConfig, loadConfig, saveConfig, type PlexConfig } from "./plex/config.ts";
+import {
+	buildAuthUrl,
+	createPin,
+	waitForPin,
+	type PlexPin,
+} from "./plex/auth.ts";
+import {
+	deleteConfig,
+	loadConfig,
+	saveConfig,
+	type PlexConfig,
+} from "./plex/config.ts";
 import {
 	PlexClient,
 	checkPlexServerStatus,
 	discoverPlexServers,
 	getPlexAccount,
 } from "./plex/client.ts";
-import { findPersistedServer, savedServerNeedsRefresh } from "./plex/server-selection.ts";
+import {
+	findPersistedServer,
+	savedServerNeedsRefresh,
+} from "./plex/server-selection.ts";
 import {
 	accountImageUrl as buildAccountImageUrl,
 	imageUrl as buildImageUrl,
@@ -54,7 +67,8 @@ function requireClient(): PlexClient {
 }
 
 async function beginAuth(): Promise<{ authUrl: string; pinCode: string }> {
-	if (authAttempt) throw new Error("An authorization flow is already in progress");
+	if (authAttempt)
+		throw new Error("An authorization flow is already in progress");
 	const clientIdentifier = config?.clientIdentifier ?? randomUUID();
 	const attempt: AuthAttempt = {
 		id: ++nextAuthAttemptId,
@@ -66,7 +80,11 @@ async function beginAuth(): Promise<{ authUrl: string; pinCode: string }> {
 
 	let pin: PlexPin;
 	try {
-		pin = await createPin(clientIdentifier, "https://plex.tv", attempt.abort.signal);
+		pin = await createPin(
+			clientIdentifier,
+			"https://plex.tv",
+			attempt.abort.signal,
+		);
 		if (!isCurrentAuthAttempt(attempt)) {
 			throw new DOMException("Aborted", "AbortError");
 		}
@@ -102,7 +120,10 @@ async function beginAuth(): Promise<{ authUrl: string; pinCode: string }> {
 			}
 		} catch (error) {
 			// Aborted (cancelAuth) or a stale retry: leave config untouched.
-			if (isCurrentAuthAttempt(attempt) && (error as Error)?.name !== "AbortError") {
+			if (
+				isCurrentAuthAttempt(attempt) &&
+				(error as Error)?.name !== "AbortError"
+			) {
 				authError = errorMessage(error);
 				console.error("Plex auth failed:", error);
 			}
@@ -130,17 +151,25 @@ async function hydrateAccount(token: string): Promise<PlexAccount> {
 	return account;
 }
 
-async function selectServer(params: { clientIdentifier: string }): Promise<void> {
+async function selectServer(params: {
+	clientIdentifier: string;
+}): Promise<void> {
 	const cfg = config;
 	if (!cfg?.token) throw new Error("Not authenticated");
 	// Re-discover fresh each selection (the list is never persisted).
 	const servers = await discoverPlexServers(cfg.token, cfg.clientIdentifier);
-	if (config?.token !== cfg.token || config?.clientIdentifier !== cfg.clientIdentifier) {
+	if (
+		config?.token !== cfg.token ||
+		config?.clientIdentifier !== cfg.clientIdentifier
+	) {
 		throw new Error("Authentication state changed while loading servers");
 	}
-	const server = servers.find((s) => s.clientIdentifier === params.clientIdentifier);
+	const server = servers.find(
+		(s) => s.clientIdentifier === params.clientIdentifier,
+	);
 	if (!server) throw new Error(`Unknown server: ${params.clientIdentifier}`);
-	if (!server.url) throw new Error(`Server "${server.name}" has no usable connection`);
+	if (!server.url)
+		throw new Error(`Server "${server.name}" has no usable connection`);
 	const next: PlexConfig = {
 		...cfg,
 		server: {
@@ -159,7 +188,9 @@ async function selectServer(params: { clientIdentifier: string }): Promise<void>
 	});
 }
 
-async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary | undefined> {
+async function getSavedServerSummary(
+	cfg: PlexConfig,
+): Promise<ServerViewSummary | undefined> {
 	if (!cfg.server || !cfg.token) return undefined;
 
 	const fallback: ServerViewSummary = {
@@ -184,7 +215,7 @@ async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary
 				...cfg,
 				server: { ...cfg.server, clientIdentifier: selected.clientIdentifier },
 			};
-				saveConfig(config);
+			saveConfig(config);
 		}
 
 		if (
@@ -212,7 +243,11 @@ async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary
 /** Replace a stale active URL with the reachable connection selected by discovery. */
 function syncActiveServer(cfg: PlexConfig, selected: PlexServerInfo): void {
 	if (!selected.online || !selected.url) return;
-	if (config?.token !== cfg.token || config.clientIdentifier !== cfg.clientIdentifier) return;
+	if (
+		config?.token !== cfg.token ||
+		config.clientIdentifier !== cfg.clientIdentifier
+	)
+		return;
 
 	const nextServer = {
 		clientIdentifier: selected.clientIdentifier,
@@ -221,7 +256,8 @@ function syncActiveServer(cfg: PlexConfig, selected: PlexServerInfo): void {
 		token: selected.token,
 	};
 	const currentServer = config.server;
-	const needsRefresh = !currentServer || savedServerNeedsRefresh(currentServer, selected);
+	const needsRefresh =
+		!currentServer || savedServerNeedsRefresh(currentServer, selected);
 	if (needsRefresh) {
 		config = { ...config, server: nextServer };
 		saveConfig(config);
@@ -272,7 +308,8 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 			},
 			async getAuthState() {
 				const cfg = config;
-				const server = cfg?.server && cfg.token ? await getSavedServerSummary(cfg) : undefined;
+				const server =
+					cfg?.server && cfg.token ? await getSavedServerSummary(cfg) : undefined;
 				return {
 					authenticated: Boolean(cfg?.token),
 					hasServer: Boolean(server),
@@ -292,7 +329,9 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 			async getAccountAvatarUrl() {
 				const cfg = config;
 				if (!cfg?.token) return null;
-				const account = cfg.account?.thumb ? cfg.account : await hydrateAccount(cfg.token);
+				const account = cfg.account?.thumb
+					? cfg.account
+					: await hydrateAccount(cfg.token);
 				if (config?.token !== cfg.token) return null;
 				return buildAccountImageUrl(account.thumb, cfg.token);
 			},
@@ -300,7 +339,9 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 				const cfg = config;
 				if (!cfg?.token) return [];
 				const servers = await discoverPlexServers(cfg.token, cfg.clientIdentifier);
-				const selected = cfg.server ? findPersistedServer(cfg.server, servers) : undefined;
+				const selected = cfg.server
+					? findPersistedServer(cfg.server, servers)
+					: undefined;
 				if (selected) syncActiveServer(cfg, selected);
 				return servers.map((server) => ({
 					name: server.name,

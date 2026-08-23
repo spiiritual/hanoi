@@ -1,9 +1,22 @@
 .player-art {
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	width: 52px;
 	height: 52px;
 	flex: 0 0 52px;
+	overflow: hidden;
 	border-radius: 6px;
 	background: linear-gradient(135deg, #e5a00d 0%, #c86b3f 50%, #6e3a4e 100%);
+	color: rgba(20, 20, 25, 0.7);
+	font-size: 20px;
+	font-weight: 700;
+}
+
+.player-art img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
 }
 
 .player-now-copy {

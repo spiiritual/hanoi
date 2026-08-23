@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type {
 	PlexAlbum,
 	PlexSection,
@@ -7,6 +7,7 @@ import type {
 import { Icon } from "../components/Icon.tsx";
 import type { ShellView } from "../app-state.ts";
 import { plex } from "../plex.ts";
+import { playerState } from "../view-state.ts";
 import { MediaCard } from "../home/HomeContent.tsx";
 
 function formatTrackDuration(duration?: number): string {
@@ -104,6 +105,40 @@ export function AlbumDetail({ ratingKey }: { ratingKey: string }) {
 		(total, track) => total + (track.duration ?? 0),
 		0,
 	);
+	const player = useSyncExternalStore(
+		playerState.subscribe,
+		playerState.getSnapshot,
+		playerState.getSnapshot,
+	);
+	const albumIsActive =
+		player.currentTrack !== null &&
+		tracks.some((track) => track.ratingKey === player.currentTrack?.ratingKey);
+	const albumIsPlaying = albumIsActive && player.status === "playing";
+	const playAlbum = () => {
+		if (albumIsActive) {
+			void playerState.togglePlay();
+			return;
+		}
+		void playerState.playQueue(tracks, 0);
+	};
+	const shuffleAlbum = () => {
+		const shuffled = [...tracks];
+		for (let index = shuffled.length - 1; index > 0; index -= 1) {
+			const randomIndex = Math.floor(Math.random() * (index + 1));
+			[shuffled[index], shuffled[randomIndex]] = [
+				shuffled[randomIndex],
+				shuffled[index],
+			];
+		}
+		void playerState.playQueue(shuffled, 0);
+	};
+	const playTrack = (track: PlexTrack, index: number) => {
+		if (player.currentTrack?.ratingKey === track.ratingKey) {
+			void playerState.togglePlay();
+		} else {
+			void playerState.playQueue(tracks, index);
+		}
+	};
 
 	return (
 		<div className="album-detail" id="album-detail">
@@ -149,16 +184,23 @@ export function AlbumDetail({ ratingKey }: { ratingKey: string }) {
 									className="album-detail-play"
 									type="button"
 									disabled={tracks.length === 0}
+									onClick={playAlbum}
 								>
 									<Icon>
-										<path d="m8 5 11 7-11 7z" />
+										{albumIsPlaying ? (
+											<path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+										) : (
+											<path d="m8 5 11 7-11 7z" />
+										)}
 									</Icon>
-									<span>Play</span>
+									<span>{albumIsPlaying ? "Playing" : "Play"}</span>
 								</button>
 								<button
 									className="album-detail-icon-action"
 									type="button"
 									aria-label="Shuffle album"
+									disabled={tracks.length === 0}
+									onClick={shuffleAlbum}
 								>
 									<Icon>
 										<path d="M3 7h3c4 0 5 10 9 10h6M17 4l4 3-4 3M3 17h3c1.5 0 2.5-1 3.5-2.5M17 14l4 3-4 3" />
@@ -198,31 +240,49 @@ export function AlbumDetail({ ratingKey }: { ratingKey: string }) {
 							<p className="album-track-empty">This album has no tracks.</p>
 						) : (
 							<div className="album-track-rows" role="list">
-								{tracks.map((track, index) => (
-									<div
-										className="album-track-row"
-										key={`${track.ratingKey}-${index}`}
-										role="listitem"
-									>
-										<span className="album-track-number">
-											<span className="album-track-index">{track.index ?? index + 1}</span>
-											<span className="album-track-play" aria-hidden="true">
-												<Icon>
-													<path d="m8 5 11 7-11 7z" />
-												</Icon>
+								{tracks.map((track, index) => {
+									const isCurrentTrack =
+										player.currentTrack?.ratingKey === track.ratingKey;
+									const isTrackPlaying = isCurrentTrack && player.status === "playing";
+									return (
+										<button
+											className={`album-track-row${isCurrentTrack ? " is-playing" : ""}`}
+											key={`${track.ratingKey}-${index}`}
+											type="button"
+											aria-current={isCurrentTrack ? "true" : undefined}
+											aria-label={`${isTrackPlaying ? "Pause" : "Play"} ${track.title}`}
+											onClick={() => playTrack(track, index)}
+										>
+											<span className="album-track-number">
+												<span className="album-track-index">
+													{track.index ?? index + 1}
+												</span>
+												<span className="album-track-play" aria-hidden="true">
+													{isTrackPlaying ? (
+														<span className="album-track-spectrum">
+															<span />
+															<span />
+															<span />
+														</span>
+													) : (
+														<Icon>
+															<path d="m8 5 11 7-11 7z" />
+														</Icon>
+													)}
+												</span>
 											</span>
-										</span>
-										<div className="album-track-copy">
-											<span className="album-track-title">{track.title}</span>
-											<span className="album-track-artist">
-												{track.grandparentTitle ?? artist}
+											<div className="album-track-copy">
+												<span className="album-track-title">{track.title}</span>
+												<span className="album-track-artist">
+													{track.grandparentTitle ?? artist}
+												</span>
+											</div>
+											<span className="album-track-duration">
+												{formatTrackDuration(track.duration)}
 											</span>
-										</div>
-										<span className="album-track-duration">
-											{formatTrackDuration(track.duration)}
-										</span>
-									</div>
-								))}
+										</button>
+									);
+								})}
 							</div>
 						)}
 					</section>

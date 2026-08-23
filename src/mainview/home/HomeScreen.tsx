@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { plex } from "../plex.ts";
 import type { ShellView } from "../app-state.ts";
-import { appState, homeState } from "../view-state.ts";
+import { appState, homeState, playerState } from "../view-state.ts";
 import { filterMusicHomeHubs } from "./utils.ts";
 import {
 	HomeCategory,
@@ -58,6 +58,11 @@ type SearchResultItem = {
 	onClick?: () => void;
 };
 
+function playHomeItem(item: PlexHubItem) {
+	if (item.type !== "track") return;
+	void playerState.playTrack(item);
+}
+
 function SearchResults({
 	query,
 	result,
@@ -82,6 +87,7 @@ function SearchResults({
 			items: result.tracks.slice(0, 6).map((item) => ({
 				title: item.title,
 				meta: item.grandparentTitle ?? item.parentTitle ?? "Song",
+				onClick: () => void playerState.playTrack(item),
 			})),
 		},
 		{
@@ -119,7 +125,6 @@ function SearchResults({
 								<button
 									className="shell-search-item"
 									type="button"
-									role="listitem"
 									onClick={item.onClick}
 									key={`${group.label}-${item.title}`}
 								>
@@ -409,13 +414,18 @@ export function HomeScreen({
 						<AlbumDetail ratingKey={selectedAlbum.ratingKey} />
 					) : app.activeView === "home" ? (
 						category ? (
-							<HomeCategory view={category} onAlbum={openAlbum} />
+							<HomeCategory
+								view={category}
+								onAlbum={openAlbum}
+								onPlay={playHomeItem}
+							/>
 						) : (
 							<HomeDashboard
 								state={home}
 								onRetry={() => void homeState.loadHomeHubs().catch(() => undefined)}
 								onCategory={(hub) => void openCategory(hub)}
 								onAlbum={openAlbum}
+								onPlay={playHomeItem}
 							/>
 						)
 					) : app.activeView === "albums" ? (

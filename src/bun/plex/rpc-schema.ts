@@ -99,7 +99,11 @@ export type PlexRpc = {
 			// search
 			search: {
 				params: { query: string };
-				response: { artists: PlexArtist[]; albums: PlexAlbum[]; tracks: PlexTrack[] };
+				response: {
+					artists: PlexArtist[];
+					albums: PlexAlbum[];
+					tracks: PlexTrack[];
+				};
 			};
 			// playback + media URLs (token stays in the main process)
 			streamUrl: { params: { ratingKey: string }; response: string | null };

@@ -1,8 +1,8 @@
 /**
  * Pure URL helpers for Plex media/image/stream URLs. Importable from the
  * view (no client instance needed) so `<img src>` / `<audio src>` can be
- * built directly. Media GETs with `X-Plex-Token` in the query string are
- * plain GETs — no CORS restrictions apply, so big blobs never cross RPC.
+ * built directly. Audio playback uses the authenticated direct stream URL in
+ * the renderer so pause/resume can reuse the browser's existing buffer.
  */
 import type { PlexTrack } from "./types.ts";
 

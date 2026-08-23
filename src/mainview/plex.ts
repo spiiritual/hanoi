@@ -39,7 +39,8 @@ export const plex = {
 	getPlaylist: (key: string) => rpc.request.getPlaylist({ key }),
 	getArtist: (ratingKey: string) => rpc.request.getArtist({ ratingKey }),
 	// home
-	getHomeHubs: (identifiers?: string[]) => rpc.request.getHomeHubs({ identifiers }),
+	getHomeHubs: (identifiers?: string[]) =>
+		rpc.request.getHomeHubs({ identifiers }),
 	getHomeHubItems: (key: string) => rpc.request.getHomeHubItems({ key }),
 	getRecentlyPlayed: () => rpc.request.getRecentlyPlayed(),
 	getMostPlayed: (sinceMs?: number) => rpc.request.getMostPlayed({ sinceMs }),

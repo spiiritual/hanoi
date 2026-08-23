@@ -177,6 +177,24 @@
 	cursor: pointer;
 }
 
+.home-hub-card-album {
+	position: relative;
+	z-index: 1;
+	display: flex;
+	width: 100%;
+	height: auto;
+	align-items: center;
+	flex-direction: column;
+	gap: 10px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
 .home-hub-card-art {
 	position: relative;
 	z-index: 1;
@@ -208,7 +226,10 @@
 	opacity: 0;
 	transform: translateY(4px);
 	pointer-events: none;
-	transition: opacity 120ms ease, transform 120ms ease, background-color 120ms ease;
+	transition:
+		opacity 120ms ease,
+		transform 120ms ease,
+		background-color 120ms ease;
 }
 
 .home-hub-card-track:hover .home-hub-card-play,
