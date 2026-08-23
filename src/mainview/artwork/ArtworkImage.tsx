@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type SyntheticEvent,
 } from "react";
-import { plex } from "./plex.ts";
+import { plex } from "../plex.ts";
 import {
   artworkAttemptKey,
   artworkRequestKey,
@@ -18,8 +18,8 @@ import {
   TRANSCODED_FALLBACK_VARIANT,
   type ArtworkRequest,
   type ArtworkRequestSource,
-} from "./artwork.ts";
-import type { ArtworkVariant } from "../bun/plex/artwork-types.ts";
+} from "./index.ts";
+import type { ArtworkVariant } from "../../bun/plex/artwork/types.ts";
 
 const requestArtwork: ArtworkRequest = (source, variant) =>
   source.kind === "server"

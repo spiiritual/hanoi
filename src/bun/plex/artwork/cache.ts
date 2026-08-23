@@ -13,7 +13,7 @@ import type {
   ArtworkRequest,
   ArtworkVariant,
   ArtworkVariantValue,
-} from "./artwork-types.ts";
+} from "./types.ts";
 
 const DEFAULT_MEMORY_MAX_ENTRIES = 100;
 const DEFAULT_MAX_ENTRIES = 1_000;

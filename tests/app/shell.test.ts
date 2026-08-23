@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-const html = await Bun.file(new URL("../src/mainview/index.html", import.meta.url)).text();
+const html = await Bun.file(new URL("../../src/mainview/index.html", import.meta.url)).text();
 const css = (
   await Promise.all(
     [
@@ -17,21 +17,21 @@ const css = (
       "player/NowPlaying.css",
       "player/PlaybackControls.css",
       "player/VolumeControls.css",
-    ].map((file) => Bun.file(new URL(`../src/mainview/${file}`, import.meta.url)).text()),
+    ].map((file) => Bun.file(new URL(`../../src/mainview/${file}`, import.meta.url)).text()),
   )
 ).join("\n");
-const mainview = await Bun.file(new URL("../src/mainview/index.tsx", import.meta.url)).text();
+const mainview = await Bun.file(new URL("../../src/mainview/index.tsx", import.meta.url)).text();
 const homeContent = await Bun.file(
-  new URL("../src/mainview/home/HomeContent.tsx", import.meta.url),
+  new URL("../../src/mainview/home/HomeContent.tsx", import.meta.url),
 ).text();
 const homeScreen = await Bun.file(
-  new URL("../src/mainview/home/HomeScreen.tsx", import.meta.url),
+  new URL("../../src/mainview/home/HomeScreen.tsx", import.meta.url),
 ).text();
 const sidebar = await Bun.file(
-  new URL("../src/mainview/sidebar/Sidebar.tsx", import.meta.url),
+  new URL("../../src/mainview/sidebar/Sidebar.tsx", import.meta.url),
 ).text();
 const playerBar = await Bun.file(
-  new URL("../src/mainview/player/PlayerBar.tsx", import.meta.url),
+  new URL("../../src/mainview/player/PlayerBar.tsx", import.meta.url),
 ).text();
 
 test("renderer bootstraps React from a minimal app root", () => {

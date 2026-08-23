@@ -1,4 +1,4 @@
-import type { ArtworkRpcResult, ArtworkVariant } from "../bun/plex/artwork-types.ts";
+import type { ArtworkRpcResult, ArtworkVariant } from "../../bun/plex/artwork/types.ts";
 
 export type ArtworkSource = { kind: "server"; path: string } | { kind: "account" };
 export type ArtworkRequestSource = ArtworkSource | null | undefined;

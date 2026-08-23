@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
-import { connectionCandidates, type PlexServerResource } from "../src/bun/plex/auth.ts";
-import { selectReachableConnection } from "../src/bun/plex/client.ts";
-import { findPersistedServer, savedServerNeedsRefresh } from "../src/bun/plex/server-selection.ts";
-import type { PlexServerInfo } from "../src/bun/plex/types.ts";
+import { connectionCandidates, type PlexServerResource } from "../../src/bun/plex/auth.ts";
+import { selectReachableConnection } from "../../src/bun/plex/client.ts";
+import {
+  findPersistedServer,
+  savedServerNeedsRefresh,
+} from "../../src/bun/plex/server-selection.ts";
+import type { PlexServerInfo } from "../../src/bun/plex/types.ts";
 
 const servers: PlexServerInfo[] = [
   {

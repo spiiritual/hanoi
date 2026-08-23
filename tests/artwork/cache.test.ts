@@ -6,7 +6,7 @@ import {
   ArtworkCache,
   type ArtworkCacheOptions,
   type ArtworkFetchResponse,
-} from "../src/bun/plex/artwork-cache.ts";
+} from "../../src/bun/plex/artwork/cache.ts";
 
 const roots: string[] = [];
 const caches: ArtworkCache[] = [];

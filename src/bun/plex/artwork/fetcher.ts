@@ -5,7 +5,7 @@ import type {
   ArtworkNamespace,
   ArtworkRpcResult,
   ArtworkVariant,
-} from "./artwork-types.ts";
+} from "./types.ts";
 
 export interface ArtworkFetcherSource {
   baseUrl: string;

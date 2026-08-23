@@ -5,7 +5,7 @@ import {
   artworkUrlForKey,
   normalizeArtworkSource,
   RendererArtworkStore,
-} from "../src/mainview/artwork.ts";
+} from "../../src/mainview/artwork/index.ts";
 
 const result = {
   dataBase64: "AQID",

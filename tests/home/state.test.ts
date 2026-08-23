@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import type { PlexHub } from "../src/bun/plex/types.ts";
-import { createHomeState } from "../src/mainview/home/state.ts";
-import { filterMusicHomeHubs } from "../src/mainview/home/utils.ts";
+import type { PlexHub } from "../../src/bun/plex/types.ts";
+import { createHomeState } from "../../src/mainview/home/state.ts";
+import { filterMusicHomeHubs } from "../../src/mainview/home/utils.ts";
 
 const recentlyPlayed = {
   key: "/hubs/home/music/recent",

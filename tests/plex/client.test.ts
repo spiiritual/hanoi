@@ -3,7 +3,7 @@ import {
   composeHomeHubs,
   PlexClient,
   replaceRecentlyPlayedPreview,
-} from "../src/bun/plex/client.ts";
+} from "../../src/bun/plex/client.ts";
 
 test("home hubs combine populated music-section rows with audio playlists", async () => {
   const sectionHubs = [

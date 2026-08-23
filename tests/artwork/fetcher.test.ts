@@ -5,8 +5,8 @@ import {
   createArtworkFetcher,
   isSameArtworkSession,
   toArtworkRpcResult,
-} from "../src/bun/plex/artwork-fetcher.ts";
-import type { ArtworkCacheEntry } from "../src/bun/plex/artwork-types.ts";
+} from "../../src/bun/plex/artwork/fetcher.ts";
+import type { ArtworkCacheEntry } from "../../src/bun/plex/artwork/types.ts";
 
 function imageResponse(): Response {
   return new Response(new Uint8Array([1, 2, 3]), {

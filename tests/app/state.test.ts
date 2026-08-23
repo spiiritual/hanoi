@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createAppState } from "../src/mainview/app-state.ts";
+import { createAppState } from "../../src/mainview/app-state.ts";
 
 const musicSections = [
   { key: "1", type: "artist", title: "Music" },
