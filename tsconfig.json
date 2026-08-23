@@ -1,5 +1,4 @@
 {
-  "extends": "./.hutch/devkit/tsconfig.json",
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
     "target": "ESNext",
@@ -8,6 +7,12 @@
     "jsx": "react-jsx",
     "allowJs": true,
     "moduleResolution": "bundler",
+    "paths": {
+      "electrobun": ["./.hutch/devkit/api/sdks/main/index.ts"],
+      "electrobun/main": ["./.hutch/devkit/api/sdks/main/index.ts"],
+      "electrobun/view": ["./.hutch/devkit/api/browser/index.ts"]
+    },
+    "types": ["bun"],
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
@@ -18,6 +23,6 @@
     "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "tests/**/*", "electrobun.config.ts"],
   "exclude": ["node_modules", "dist", "build", "../../package/dist"]
 }

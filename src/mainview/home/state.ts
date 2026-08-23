@@ -9,8 +9,8 @@ export interface HomeStateSnapshot {
 }
 
 export interface HomeState {
-  getSnapshot(): HomeStateSnapshot;
-  subscribe(listener: (snapshot: HomeStateSnapshot) => void): () => void;
+  getSnapshot(this: void): HomeStateSnapshot;
+  subscribe(this: void, listener: (snapshot: HomeStateSnapshot) => void): () => void;
   setServer(clientIdentifier: string | null): void;
   loadHomeHubs(): Promise<PlexHub[]>;
 }

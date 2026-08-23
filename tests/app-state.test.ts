@@ -103,7 +103,14 @@ test("failed section loads expose an error and can be retried", async () => {
   });
   appState.setSelectedServer("server-1");
 
-  await expect(appState.loadMusicSections()).rejects.toThrow("Plex unavailable");
+  let failure: unknown;
+  try {
+    await appState.loadMusicSections();
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure).toHaveProperty("message", "Plex unavailable");
   expect(appState.getSnapshot()).toMatchObject({
     musicSectionsStatus: "error",
     musicSectionsError: "Plex unavailable",

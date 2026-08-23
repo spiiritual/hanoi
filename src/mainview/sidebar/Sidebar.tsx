@@ -177,7 +177,7 @@ export function Sidebar({
                   type="button"
                   key={server.clientIdentifier}
                   onClick={() => {
-                    void onSelectServer(server);
+                    onSelectServer(server);
                     setServerOpen(false);
                   }}
                 >

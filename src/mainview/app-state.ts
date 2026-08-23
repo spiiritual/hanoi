@@ -16,8 +16,8 @@ export interface AppStateSnapshot {
 }
 
 export interface AppState {
-  getSnapshot(): AppStateSnapshot;
-  subscribe(listener: (snapshot: AppStateSnapshot) => void): () => void;
+  getSnapshot(this: void): AppStateSnapshot;
+  subscribe(this: void, listener: (snapshot: AppStateSnapshot) => void): () => void;
   setActiveView(view: ShellView): void;
   setSearchQuery(query: string): void;
   setSelectedServer(clientIdentifier: string | null): void;

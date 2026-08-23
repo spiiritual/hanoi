@@ -168,28 +168,39 @@ test("recently played Home preview uses mixed artist, album, and track items", (
 test("home hub item requests load the full category from Plex's hub key", async () => {
   const originalFetch = globalThis.fetch;
   const requestedUrls: string[] = [];
-  globalThis.fetch = async (input) => {
-    requestedUrls.push(String(input));
-    return Response.json({
-      MediaContainer: {
-        size: 2,
-        Metadata: [
-          {
-            ratingKey: "album-1",
-            key: "/library/metadata/album-1",
-            type: "album",
-            title: "Album one",
-          },
-          {
-            ratingKey: "album-2",
-            key: "/library/metadata/album-2",
-            type: "album",
-            title: "Album two",
-          },
-        ],
-      },
-    });
-  };
+  globalThis.fetch = Object.assign(
+    async (input: Parameters<typeof fetch>[0]) => {
+      let requestedUrl: string;
+      if (typeof input === "string") {
+        requestedUrl = input;
+      } else if (input instanceof URL) {
+        requestedUrl = input.href;
+      } else {
+        requestedUrl = input.url;
+      }
+      requestedUrls.push(requestedUrl);
+      return Response.json({
+        MediaContainer: {
+          size: 2,
+          Metadata: [
+            {
+              ratingKey: "album-1",
+              key: "/library/metadata/album-1",
+              type: "album",
+              title: "Album one",
+            },
+            {
+              ratingKey: "album-2",
+              key: "/library/metadata/album-2",
+              type: "album",
+              title: "Album two",
+            },
+          ],
+        },
+      });
+    },
+    { preconnect: originalFetch.preconnect },
+  );
 
   try {
     const client = new PlexClient({ url: "http://plex.test", token: "test-token" });
