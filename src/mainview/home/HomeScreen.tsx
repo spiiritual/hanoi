@@ -5,7 +5,7 @@ import { appState, homeState, playerState } from "../view-state.ts";
 import { filterMusicHomeHubs } from "./utils.ts";
 import { HomeCategory, HomeDashboard, type HomeCategoryView } from "./HomeContent.tsx";
 import { AlbumDetail, AlbumLibrary } from "../album/AlbumScreen.tsx";
-import { PlaylistDetail, PlaylistLibrary } from "../playlist/PlaylistScreen.tsx";
+import { PlaylistDetail } from "../playlist/PlaylistScreen.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { PlayerBar } from "../player/PlayerBar.tsx";
 import { Sidebar } from "../sidebar/Sidebar.tsx";
@@ -463,12 +463,6 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
               sectionsError={app.musicSectionsError}
               onAlbum={openAlbum}
               onView={changeView}
-            />
-          ) : app.activeView === "playlists" ? (
-            <PlaylistLibrary
-              onPlaylist={openPlaylist}
-              onView={changeView}
-              serverKey={app.selectedServer}
             />
           ) : app.activeView === "search" ? (
             <SearchResults

@@ -4,7 +4,8 @@
   "description": "A simple Electrobun app showcasing core features",
   "scripts": {
     "lint": "oxlint --type-aware --type-check",
-    "lint:agent": "oxlint --type-aware --type-check --format=agent"
+    "lint:fix": "oxlint --type-aware --type-check --fix",
+    "lint:agent": "oxlint --type-aware --type-check --fix --format=agent"
   },
   "dependencies": {
     "react": "^19.2.8",

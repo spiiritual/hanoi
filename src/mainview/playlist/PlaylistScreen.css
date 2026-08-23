@@ -1,0 +1,67 @@
+/* Playlist detail follows the playlist frames in pen/plex.pen. */
+
+.playlist-detail {
+  gap: 20px;
+}
+
+.playlist-detail-art {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 180px;
+  height: 180px;
+  flex: 0 0 180px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #363640 0%, #1f1f27 100%);
+}
+
+.playlist-detail-art span {
+  color: var(--text-tertiary);
+  font-size: 42px;
+  font-weight: 700;
+}
+
+.playlist-detail-art::after {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+}
+
+.playlist-detail-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.playlist-detail .album-detail-title {
+  letter-spacing: -0.5px;
+}
+
+.playlist-detail .album-track-title {
+  font-weight: 400;
+}
+
+.playlist-detail .album-detail-icon-action.is-liked {
+  color: var(--accent);
+}
+
+.playlist-detail .album-detail-icon-action.is-liked svg {
+  fill: currentColor;
+}
+
+@media (max-width: 1040px) {
+  .playlist-detail-art {
+    width: 168px;
+    height: 168px;
+    flex-basis: 168px;
+  }
+
+  .playlist-detail .album-detail-title {
+    font-size: 28px;
+  }
+}
