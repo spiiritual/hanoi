@@ -5,11 +5,18 @@ import { appState, homeState, playerState } from "../view-state.ts";
 import { filterMusicHomeHubs } from "./utils.ts";
 import { HomeCategory, HomeDashboard, type HomeCategoryView } from "./HomeContent.tsx";
 import { AlbumDetail, AlbumLibrary } from "../album/AlbumScreen.tsx";
+import { ArtistDetail, ArtistLibrary } from "../artist/ArtistScreen.tsx";
 import { PlaylistDetail } from "../playlist/PlaylistScreen.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { PlayerBar } from "../player/PlayerBar.tsx";
 import { Sidebar } from "../sidebar/Sidebar.tsx";
-import type { PlexAlbum, PlexHub, PlexHubItem, PlexPlaylist } from "../../bun/plex/types.ts";
+import type {
+  PlexAlbum,
+  PlexArtist,
+  PlexHub,
+  PlexHubItem,
+  PlexPlaylist,
+} from "../../bun/plex/types.ts";
 import type { Account, Server } from "../types.ts";
 
 const shellViewCopy: Record<ShellView, { eyebrow: string; title: string; copy: string }> = {
@@ -62,11 +69,13 @@ function SearchResults({
   result,
   status,
   onAlbum,
+  onArtist,
 }: {
   query: string;
   result: SearchResult | null;
   status: string | null;
   onAlbum: (album: PlexAlbum) => void;
+  onArtist: (artist: PlexArtist) => void;
 }) {
   if (status)
     return (
@@ -96,7 +105,11 @@ function SearchResults({
     },
     {
       label: "Artists",
-      items: result.artists.slice(0, 6).map((item) => ({ title: item.title, meta: "Artist" })),
+      items: result.artists.slice(0, 6).map((item) => ({
+        title: item.title,
+        meta: "Artist",
+        onClick: () => onArtist(item),
+      })),
     },
   ];
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
@@ -157,6 +170,8 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
   };
   const [selectedAlbum, setSelectedAlbum] = useState<AlbumNavigation | null>(null);
   const [forwardAlbum, setForwardAlbum] = useState<AlbumNavigation | null>(null);
+  const [selectedArtist, setSelectedArtist] = useState<AlbumNavigation | null>(null);
+  const [forwardArtist, setForwardArtist] = useState<AlbumNavigation | null>(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState<AlbumNavigation | null>(null);
   const [forwardPlaylist, setForwardPlaylist] = useState<AlbumNavigation | null>(null);
 
@@ -195,6 +210,8 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
     setCategory(null);
     setSelectedAlbum(null);
     setForwardAlbum(null);
+    setSelectedArtist(null);
+    setForwardArtist(null);
     setSelectedPlaylist(null);
     setForwardPlaylist(null);
     searchRun.current += 1;
@@ -237,6 +254,8 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
   const changeView = (view: ShellView) => {
     setSelectedAlbum(null);
     setForwardAlbum(null);
+    setSelectedArtist(null);
+    setForwardArtist(null);
     setSelectedPlaylist(null);
     setForwardPlaylist(null);
     if (view !== "home") {
@@ -250,6 +269,8 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
   const openAlbum = (item: PlexAlbum | PlexHubItem) => {
     if (!item.ratingKey) return;
     const returnView = app.activeView;
+    setSelectedArtist(null);
+    setForwardArtist(null);
     setSelectedPlaylist(null);
     setForwardPlaylist(null);
     setForwardAlbum(null);
@@ -262,9 +283,23 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
     const returnView = app.activeView;
     setSelectedAlbum(null);
     setForwardAlbum(null);
+    setSelectedArtist(null);
+    setForwardArtist(null);
     setForwardPlaylist(null);
     setSelectedPlaylist({ ratingKey: playlist.ratingKey, returnView });
     if (returnView !== "playlists") appState.setActiveView("playlists");
+  };
+
+  const openArtist = (item: PlexArtist | PlexHubItem) => {
+    if (!item.ratingKey) return;
+    const returnView = app.activeView;
+    setSelectedAlbum(null);
+    setForwardAlbum(null);
+    setSelectedPlaylist(null);
+    setForwardPlaylist(null);
+    setForwardArtist(null);
+    setSelectedArtist({ ratingKey: item.ratingKey, returnView });
+    if (returnView !== "artists") appState.setActiveView("artists");
   };
 
   const closeAlbum = () => {
@@ -273,6 +308,14 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
       setSelectedAlbum(null);
       if (appState.getSnapshot().activeView !== selectedAlbum.returnView) {
         appState.setActiveView(selectedAlbum.returnView);
+      }
+      return;
+    }
+    if (selectedArtist) {
+      setForwardArtist(selectedArtist);
+      setSelectedArtist(null);
+      if (appState.getSnapshot().activeView !== selectedArtist.returnView) {
+        appState.setActiveView(selectedArtist.returnView);
       }
       return;
     }
@@ -291,6 +334,14 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
       setForwardAlbum(null);
       if (appState.getSnapshot().activeView !== "albums") {
         appState.setActiveView("albums");
+      }
+      return;
+    }
+    if (forwardArtist) {
+      setSelectedArtist(forwardArtist);
+      setForwardArtist(null);
+      if (appState.getSnapshot().activeView !== "artists") {
+        appState.setActiveView("artists");
       }
       return;
     }
@@ -367,7 +418,7 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
             className="topbar-icon"
             type="button"
             aria-label="Back"
-            disabled={!selectedAlbum && !selectedPlaylist}
+            disabled={!selectedAlbum && !selectedArtist && !selectedPlaylist}
             onClick={closeAlbum}
           >
             <Icon>
@@ -378,7 +429,7 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
             className="topbar-icon"
             type="button"
             aria-label="Forward"
-            disabled={!forwardAlbum && !forwardPlaylist}
+            disabled={!forwardAlbum && !forwardArtist && !forwardPlaylist}
             onClick={reopenAlbum}
           >
             <Icon>
@@ -401,6 +452,8 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
                 const query = event.currentTarget.value.trim();
                 setSelectedAlbum(null);
                 setForwardAlbum(null);
+                setSelectedArtist(null);
+                setForwardArtist(null);
                 setSelectedPlaylist(null);
                 setForwardPlaylist(null);
                 appState.setSearchQuery(query);
@@ -436,6 +489,8 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
         <div className="home-content" id="home-content">
           {selectedAlbum ? (
             <AlbumDetail ratingKey={selectedAlbum.ratingKey} />
+          ) : selectedArtist ? (
+            <ArtistDetail ratingKey={selectedArtist.ratingKey} onAlbum={openAlbum} />
           ) : selectedPlaylist ? (
             <PlaylistDetail ratingKey={selectedPlaylist.ratingKey} />
           ) : app.activeView === "home" ? (
@@ -443,6 +498,7 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
               <HomeCategory
                 view={category}
                 onAlbum={openAlbum}
+                onArtist={openArtist}
                 onPlaylist={openPlaylist}
                 onPlay={playHomeItem}
               />
@@ -452,6 +508,7 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
                 onRetry={() => void homeState.loadHomeHubs().catch(() => undefined)}
                 onCategory={(hub) => void openCategory(hub)}
                 onAlbum={openAlbum}
+                onArtist={openArtist}
                 onPlaylist={openPlaylist}
                 onPlay={playHomeItem}
               />
@@ -464,12 +521,21 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
               onAlbum={openAlbum}
               onView={changeView}
             />
+          ) : app.activeView === "artists" ? (
+            <ArtistLibrary
+              sections={app.musicSections}
+              sectionsStatus={app.musicSectionsStatus}
+              sectionsError={app.musicSectionsError}
+              onArtist={openArtist}
+              onView={changeView}
+            />
           ) : app.activeView === "search" ? (
             <SearchResults
               query={app.searchQuery}
               result={searchResult}
               status={searchStatus}
               onAlbum={openAlbum}
+              onArtist={openArtist}
             />
           ) : (
             <div className="home-shell-placeholder" id="shell-placeholder">

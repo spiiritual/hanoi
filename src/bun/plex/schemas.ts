@@ -163,6 +163,8 @@ export const artistSchema = z
     key: z.string(),
     type: z.literal("artist"),
     title: z.string(),
+    thumb: z.string().optional(),
+    art: z.string().optional(),
     childCount: z.number().optional(),
     leafCount: z.number().optional(),
     Genre: z.array(genreSchema).optional(),

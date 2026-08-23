@@ -24,19 +24,25 @@ export function MediaCard({
   category,
   onPlay,
   onAlbum,
+  onArtist,
   onPlaylist,
+  meta,
 }: {
   item: PlexHubItem;
   category?: boolean;
   onPlay?: () => void;
   onAlbum?: (item: PlexHubItem) => void;
+  onArtist?: (item: PlexHubItem) => void;
   onPlaylist?: (item: PlexHubItem) => void;
+  meta?: string;
 }) {
   const [image, setImage] = useState<string | null>(null);
   const interaction = homeHubItemInteraction(item);
   const canOpenAlbum = item.type === "album" && Boolean(onAlbum);
+  const canOpenArtist = item.type === "artist" && Boolean(onArtist);
   const canOpenPlaylist = item.type === "playlist" && Boolean(onPlaylist);
   const openAlbum = () => onAlbum?.(item);
+  const openArtist = () => onArtist?.(item);
   const openPlaylist = () => onPlaylist?.(item);
 
   useEffect(() => {
@@ -83,7 +89,7 @@ export function MediaCard({
       <div className="home-hub-card-text">
         <span className="home-hub-card-title">{item.title}</span>
         <span className="home-hub-card-meta">
-          {category ? homeCategoryItemMeta(item) : homeHubItemMeta(item)}
+          {meta ?? (category ? homeCategoryItemMeta(item) : homeHubItemMeta(item))}
         </span>
       </div>
     </>
@@ -100,6 +106,15 @@ export function MediaCard({
           type="button"
           aria-label={`Open album ${item.title}`}
           onClick={openAlbum}
+        >
+          {cardContent}
+        </button>
+      ) : canOpenArtist ? (
+        <button
+          className="home-hub-card-album"
+          type="button"
+          aria-label={`Open artist ${item.title}`}
+          onClick={openArtist}
         >
           {cardContent}
         </button>
@@ -122,11 +137,13 @@ export function MediaCard({
 export function HomeCategory({
   view,
   onAlbum,
+  onArtist,
   onPlay,
   onPlaylist,
 }: {
   view: HomeCategoryView;
   onAlbum: (item: PlexHubItem) => void;
+  onArtist: (item: PlexHubItem) => void;
   onPlay: (item: PlexHubItem) => void;
   onPlaylist: (item: PlexHubItem) => void;
 }) {
@@ -156,6 +173,7 @@ export function HomeCategory({
               item={item}
               category
               onAlbum={onAlbum}
+              onArtist={onArtist}
               onPlaylist={onPlaylist}
               onPlay={() => onPlay(item)}
               key={`${item.ratingKey ?? item.title}`}
@@ -171,6 +189,7 @@ export function HomeDashboard({
   onRetry,
   onCategory,
   onAlbum,
+  onArtist,
   onPlay,
   onPlaylist,
 }: {
@@ -178,6 +197,7 @@ export function HomeDashboard({
   onRetry: () => void;
   onCategory: (hub: PlexHub) => void;
   onAlbum: (item: PlexHubItem) => void;
+  onArtist: (item: PlexHubItem) => void;
   onPlay: (item: PlexHubItem) => void;
   onPlaylist: (item: PlexHubItem) => void;
 }) {
@@ -231,6 +251,7 @@ export function HomeDashboard({
                   <MediaCard
                     item={item}
                     onAlbum={onAlbum}
+                    onArtist={onArtist}
                     onPlaylist={onPlaylist}
                     onPlay={() => onPlay(item)}
                     key={`${item.ratingKey ?? item.title}`}

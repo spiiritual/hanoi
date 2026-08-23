@@ -6,6 +6,7 @@
 @import "./home/HomeScreen.css";
 @import "./home/HomeContent.css";
 @import "./album/AlbumScreen.css";
+@import "./artist/ArtistScreen.css";
 @import "./playlist/PlaylistScreen.css";
 @import "./sidebar/Sidebar.css";
 @import "./player/PlayerBar.css";

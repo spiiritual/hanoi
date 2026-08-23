@@ -1,4 +1,4 @@
-import { z } from "zod";
+import type { z } from "zod";
 import {
   container,
   filterItems,
@@ -492,9 +492,9 @@ export class PlexClient {
     const sections = await this.getMusicSections();
     const perSection = await Promise.all(
       sections.map(async (section) => {
-        const since = sinceMs !== undefined ? new Date(sinceMs).getTime() / 1000 : undefined;
+        const since = sinceMs === undefined ? undefined : new Date(sinceMs).getTime() / 1000;
         return this.parseContainerArray<PlexHubItem>(
-          `/library/sections/${section.key}/all?viewCount%3E=1&type=10&sort=viewCount:desc${since !== undefined ? `&addedAt%3E=${Math.floor(since)}` : ""}`,
+          `/library/sections/${section.key}/all?viewCount%3E=1&type=10&sort=viewCount:desc${since === undefined ? "" : `&addedAt%3E=${Math.floor(since)}`}`,
           hubItemSchema,
           "Metadata",
         );
@@ -559,6 +559,14 @@ export class PlexClient {
     // Plex does not populate childCount/leafCount on artist metadata, so
     // counts come from full unfiltered queries (`size` = exact total).
     const sections = await this.getMusicSections();
+    // The section-wide `parentRatingKey` query is not consistently honored by
+    // Plex servers. The artist children endpoint is scoped to this artist and
+    // avoids leaking albums from the rest of the library into the detail view.
+    const albumsPromise = this.parseContainerArray<PlexAlbum>(
+      `/library/metadata/${ratingKey}/children`,
+      albumSchema,
+      "Metadata",
+    );
     const perSection = await Promise.all(
       sections.map(async (section) => {
         const tracksParams = new URLSearchParams({
@@ -566,30 +574,17 @@ export class PlexClient {
           filter: `artist.id=${ratingKey}`,
           sort: "viewCount:desc",
         });
-        const albumsParams = new URLSearchParams({
-          type: "9",
-          parentRatingKey: String(ratingKey),
-        });
-        const [tracksData, albumsData] = await Promise.all([
-          this.parseContainerArray<PlexTrack>(
-            `/library/sections/${section.key}/all?${tracksParams.toString()}`,
-            trackSchema,
-            "Metadata",
-          ),
-          this.parseContainerArray<PlexAlbum>(
-            `/library/sections/${section.key}/all?${albumsParams.toString()}`,
-            albumSchema,
-            "Metadata",
-          ),
-        ]);
-        return {
-          tracks: tracksData,
-          albums: albumsData,
-        };
+        const tracksData = await this.parseContainerArray<PlexTrack>(
+          `/library/sections/${section.key}/all?${tracksParams.toString()}`,
+          trackSchema,
+          "Metadata",
+        );
+        return { tracks: tracksData };
       }),
     );
+    const artistAlbums = await albumsPromise;
     const totalSongs = perSection.reduce((n, s) => n + s.tracks.length, 0);
-    const totalAlbums = perSection.reduce((n, s) => n + s.albums.length, 0);
+    const totalAlbums = artistAlbums.length;
 
     const seenTracks = new Set<string>();
     const tracks = perSection.reduce<PlexTrack[]>((unique, section) => {
@@ -601,14 +596,11 @@ export class PlexClient {
       }, unique);
     }, []);
     const seenAlbums = new Set<string>();
-    const albums = perSection.reduce<PlexAlbum[]>((unique, section) => {
-      return section.albums.reduce((items, item) => {
-        if (seenAlbums.has(item.ratingKey)) return items;
-        seenAlbums.add(item.ratingKey);
-        items.push(item);
-        return items;
-      }, unique);
-    }, []);
+    const albums = artistAlbums.filter((album) => {
+      if (seenAlbums.has(album.ratingKey)) return false;
+      seenAlbums.add(album.ratingKey);
+      return true;
+    });
 
     return {
       artist: artist ?? {
