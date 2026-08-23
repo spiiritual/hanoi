@@ -23,13 +23,17 @@ export function MediaCard({
 	item,
 	category,
 	onPlay,
+	onAlbum,
 }: {
 	item: PlexHubItem;
 	category?: boolean;
 	onPlay?: () => void;
+	onAlbum?: (item: PlexHubItem) => void;
 }) {
 	const [image, setImage] = useState<string | null>(null);
 	const interaction = homeHubItemInteraction(item);
+	const canOpenAlbum = item.type === "album" && Boolean(onAlbum);
+	const openAlbum = () => onAlbum?.(item);
 
 	useEffect(() => {
 		let active = true;
@@ -51,7 +55,20 @@ export function MediaCard({
 	return (
 		<article
 			className={`home-hub-card${category ? " home-category-card" : ""} home-hub-card-${interaction}`}
-			role="listitem"
+			role={canOpenAlbum ? "button" : "listitem"}
+			tabIndex={canOpenAlbum ? 0 : undefined}
+			aria-label={canOpenAlbum ? `Open album ${item.title}` : undefined}
+			onClick={canOpenAlbum ? openAlbum : undefined}
+			onKeyDown={
+				canOpenAlbum
+					? (event) => {
+							if (event.key === "Enter" || event.key === " ") {
+								event.preventDefault();
+								openAlbum();
+							}
+						}
+					: undefined
+			}
 		>
 			<div className="home-hub-card-art">
 				<span className="home-hub-card-art-fallback" hidden={Boolean(image)}>
@@ -81,7 +98,13 @@ export function MediaCard({
 	);
 }
 
-export function HomeCategory({ view }: { view: HomeCategoryView }) {
+export function HomeCategory({
+	view,
+	onAlbum,
+}: {
+	view: HomeCategoryView;
+	onAlbum: (item: PlexHubItem) => void;
+}) {
 	return (
 		<div className="home-category" id="home-category">
 			<header className="home-category-header">
@@ -104,7 +127,12 @@ export function HomeCategory({ view }: { view: HomeCategoryView }) {
 			<div className="home-category-cards" id="home-category-cards" role="list">
 				{view.status === "ready" &&
 					view.items.map((item) => (
-						<MediaCard item={item} category key={`${item.ratingKey ?? item.title}`} />
+						<MediaCard
+							item={item}
+							category
+							onAlbum={onAlbum}
+							key={`${item.ratingKey ?? item.title}`}
+						/>
 					))}
 			</div>
 		</div>
@@ -115,10 +143,12 @@ export function HomeDashboard({
 	state,
 	onRetry,
 	onCategory,
+	onAlbum,
 }: {
 	state: HomeStateSnapshot;
 	onRetry: () => void;
 	onCategory: (hub: PlexHub) => void;
+	onAlbum: (item: PlexHubItem) => void;
 }) {
 	const hubs = filterMusicHomeHubs(state.hubs);
 
@@ -177,7 +207,11 @@ export function HomeDashboard({
 							</div>
 							<div className="home-hub-cards" role="list">
 								{(hub.Metadata ?? []).slice(0, HOME_HUB_PREVIEW_SIZE).map((item) => (
-									<MediaCard item={item} key={`${item.ratingKey ?? item.title}`} />
+									<MediaCard
+										item={item}
+										onAlbum={onAlbum}
+										key={`${item.ratingKey ?? item.title}`}
+									/>
 								))}
 							</div>
 						</section>

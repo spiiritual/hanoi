@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { hydrateAccountIfMissing } from "../account-hydration.ts";
+import { hydrateAccountIfMissing } from "./utils.ts";
 import { appState } from "../view-state.ts";
 import { plex } from "../plex.ts";
 import type { Account, Server } from "../types.ts";

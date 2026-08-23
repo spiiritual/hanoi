@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { serverStatusClass, serverStatusLabel } from "../src/mainview/server-status.ts";
+import {
+	serverStatusClass,
+	serverStatusLabel,
+} from "../src/mainview/sidebar/utils.ts";
 
 test("offline servers keep an offline status in the selector", () => {
 	expect(serverStatusLabel(false)).toBe("○ Offline");

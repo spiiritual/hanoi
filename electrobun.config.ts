@@ -28,6 +28,7 @@ export default {
 				"views/mainview/auth/ServerSelection.css",
 			"src/mainview/home/HomeScreen.css": "views/mainview/home/HomeScreen.css",
 			"src/mainview/home/HomeContent.css": "views/mainview/home/HomeContent.css",
+			"src/mainview/album/AlbumScreen.css": "views/mainview/album/AlbumScreen.css",
 			"src/mainview/sidebar/Sidebar.css": "views/mainview/sidebar/Sidebar.css",
 			"src/mainview/player/PlayerBar.css": "views/mainview/player/PlayerBar.css",
 			"src/mainview/player/NowPlaying.css": "views/mainview/player/NowPlaying.css",

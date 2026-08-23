@@ -205,6 +205,8 @@
 
 .shell-search-item {
 	display: flex;
+	font: inherit;
+	cursor: pointer;
 	min-width: 0;
 	flex-direction: column;
 	gap: 4px;
@@ -233,7 +235,8 @@
 	font-size: 11px;
 }
 
-.shell-search-item:hover {
+.shell-search-item:hover,
+.shell-search-item:focus-visible {
 	border-color: var(--accent);
 	background: var(--surface-2);
 }

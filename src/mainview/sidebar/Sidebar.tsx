@@ -3,8 +3,8 @@ import { plex } from "../plex.ts";
 import type { ShellView } from "../app-state.ts";
 import { Icon } from "../components/Icon.tsx";
 import { ServerIcon } from "../components/ServerIcon.tsx";
-import { initials } from "../identity.ts";
-import { serverStatusClass, serverStatusLabel } from "../server-status.ts";
+import { initials } from "../utils.ts";
+import { serverStatusClass, serverStatusLabel } from "./utils.ts";
 import type { Account, Server } from "../types.ts";
 
 export function Sidebar({

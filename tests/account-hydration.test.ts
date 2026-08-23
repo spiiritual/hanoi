@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { hydrateAccountIfMissing } from "../src/mainview/account-hydration.ts";
+import { hydrateAccountIfMissing } from "../src/mainview/auth/utils.ts";
 
 const account = { username: "andrew", email: "andrew@example.com" };
 

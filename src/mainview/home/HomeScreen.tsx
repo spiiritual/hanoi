@@ -8,10 +8,11 @@ import {
 	HomeDashboard,
 	type HomeCategoryView,
 } from "./HomeContent.tsx";
+import { AlbumDetail, AlbumLibrary } from "../album/AlbumScreen.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { PlayerBar } from "../player/PlayerBar.tsx";
 import { Sidebar } from "../sidebar/Sidebar.tsx";
-import type { PlexHub } from "../../bun/plex/types.ts";
+import type { PlexAlbum, PlexHub, PlexHubItem } from "../../bun/plex/types.ts";
 import type { Account, Server } from "../types.ts";
 
 const shellViewCopy: Record<
@@ -51,15 +52,22 @@ const shellViewCopy: Record<
 };
 
 type SearchResult = Awaited<ReturnType<typeof plex.search>>;
+type SearchResultItem = {
+	title: string;
+	meta: string;
+	onClick?: () => void;
+};
 
 function SearchResults({
 	query,
 	result,
 	status,
+	onAlbum,
 }: {
 	query: string;
 	result: SearchResult | null;
 	status: string | null;
+	onAlbum: (album: PlexAlbum) => void;
 }) {
 	if (status)
 		return (
@@ -68,7 +76,7 @@ function SearchResults({
 			</div>
 		);
 	if (!result) return null;
-	const groups = [
+	const groups: Array<{ label: string; items: SearchResultItem[] }> = [
 		{
 			label: "Songs",
 			items: result.tracks.slice(0, 6).map((item) => ({
@@ -83,6 +91,7 @@ function SearchResults({
 				meta: [item.parentTitle, item.year ? String(item.year) : "Album"]
 					.filter(Boolean)
 					.join(" · "),
+				onClick: () => onAlbum(item),
 			})),
 		},
 		{
@@ -107,14 +116,16 @@ function SearchResults({
 						<h3>{group.label}</h3>
 						<div className="shell-search-items">
 							{group.items.map((item) => (
-								<div
+								<button
 									className="shell-search-item"
+									type="button"
 									role="listitem"
+									onClick={item.onClick}
 									key={`${group.label}-${item.title}`}
 								>
 									<span className="shell-search-item-title">{item.title}</span>
 									<span className="shell-search-item-meta">{item.meta}</span>
-								</div>
+								</button>
 							))}
 						</div>
 					</section>
@@ -152,6 +163,10 @@ export function HomeScreen({
 	const searchRun = useRef(0);
 	const searchTimer = useRef<number | null>(null);
 	const categoryRun = useRef(0);
+	const [selectedAlbum, setSelectedAlbum] = useState<{
+		ratingKey: string;
+		returnView: ShellView;
+	} | null>(null);
 
 	const issueSearch = (query: string, generation: number) => {
 		const run = ++searchRun.current;
@@ -186,6 +201,7 @@ export function HomeScreen({
 		homeState.setServer(app.selectedServer);
 		categoryRun.current += 1;
 		setCategory(null);
+		setSelectedAlbum(null);
 		searchRun.current += 1;
 		setSearchResult(null);
 	}, [app.selectedServer]);
@@ -224,12 +240,28 @@ export function HomeScreen({
 	}, [app.searchQuery, app.searchGeneration]);
 
 	const changeView = (view: ShellView) => {
+		setSelectedAlbum(null);
 		if (view !== "home") {
 			categoryRun.current += 1;
 			setCategory(null);
 		}
 		if (view !== "search") appState.setSearchQuery("");
 		appState.setActiveView(view);
+	};
+
+	const openAlbum = (item: PlexAlbum | PlexHubItem) => {
+		if (!item.ratingKey) return;
+		const returnView = app.activeView;
+		setSelectedAlbum({ ratingKey: item.ratingKey, returnView });
+		if (returnView !== "albums") appState.setActiveView("albums");
+	};
+
+	const closeAlbum = () => {
+		const returnView = selectedAlbum?.returnView;
+		setSelectedAlbum(null);
+		if (returnView && appState.getSnapshot().activeView !== returnView) {
+			appState.setActiveView(returnView);
+		}
 	};
 
 	const openCategory = async (hub: PlexHub) => {
@@ -301,7 +333,13 @@ export function HomeScreen({
 			/>
 			<main className="home-main">
 				<header className="home-topbar">
-					<button className="topbar-icon" type="button" aria-label="Back" disabled>
+					<button
+						className="topbar-icon"
+						type="button"
+						aria-label="Back"
+						disabled={!selectedAlbum}
+						onClick={closeAlbum}
+					>
 						<Icon>
 							<path d="m15 18-6-6 6-6" />
 						</Icon>
@@ -330,6 +368,7 @@ export function HomeScreen({
 							value={app.searchQuery}
 							onChange={(event) => {
 								const query = event.currentTarget.value.trim();
+								setSelectedAlbum(null);
 								appState.setSearchQuery(query);
 								appState.setActiveView(query ? "search" : "home");
 								categoryRun.current += 1;
@@ -366,21 +405,33 @@ export function HomeScreen({
 					</button>
 				</header>
 				<div className="home-content" id="home-content">
-					{app.activeView === "home" ? (
+					{selectedAlbum ? (
+						<AlbumDetail ratingKey={selectedAlbum.ratingKey} />
+					) : app.activeView === "home" ? (
 						category ? (
-							<HomeCategory view={category} />
+							<HomeCategory view={category} onAlbum={openAlbum} />
 						) : (
 							<HomeDashboard
 								state={home}
 								onRetry={() => void homeState.loadHomeHubs().catch(() => undefined)}
 								onCategory={(hub) => void openCategory(hub)}
+								onAlbum={openAlbum}
 							/>
 						)
+					) : app.activeView === "albums" ? (
+						<AlbumLibrary
+							sections={app.musicSections}
+							sectionsStatus={app.musicSectionsStatus}
+							sectionsError={app.musicSectionsError}
+							onAlbum={openAlbum}
+							onView={changeView}
+						/>
 					) : app.activeView === "search" ? (
 						<SearchResults
 							query={app.searchQuery}
 							result={searchResult}
 							status={searchStatus}
+							onAlbum={openAlbum}
 						/>
 					) : (
 						<div className="home-shell-placeholder" id="shell-placeholder">

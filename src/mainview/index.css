@@ -5,6 +5,7 @@
 @import "./auth/ServerSelection.css";
 @import "./home/HomeScreen.css";
 @import "./home/HomeContent.css";
+@import "./album/AlbumScreen.css";
 @import "./sidebar/Sidebar.css";
 @import "./player/PlayerBar.css";
 @import "./player/NowPlaying.css";

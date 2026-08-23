@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { initials } from "../identity.ts";
+import { initials } from "../utils.ts";
 import { plex } from "../plex.ts";
 import type { Account } from "../types.ts";
 
