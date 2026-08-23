@@ -168,10 +168,14 @@ export function HomeScreen({
 	const searchRun = useRef(0);
 	const searchTimer = useRef<number | null>(null);
 	const categoryRun = useRef(0);
-	const [selectedAlbum, setSelectedAlbum] = useState<{
+	type AlbumNavigation = {
 		ratingKey: string;
 		returnView: ShellView;
-	} | null>(null);
+	};
+	const [selectedAlbum, setSelectedAlbum] = useState<AlbumNavigation | null>(
+		null,
+	);
+	const [forwardAlbum, setForwardAlbum] = useState<AlbumNavigation | null>(null);
 
 	const issueSearch = (query: string, generation: number) => {
 		const run = ++searchRun.current;
@@ -207,6 +211,7 @@ export function HomeScreen({
 		categoryRun.current += 1;
 		setCategory(null);
 		setSelectedAlbum(null);
+		setForwardAlbum(null);
 		searchRun.current += 1;
 		setSearchResult(null);
 	}, [app.selectedServer]);
@@ -246,6 +251,7 @@ export function HomeScreen({
 
 	const changeView = (view: ShellView) => {
 		setSelectedAlbum(null);
+		setForwardAlbum(null);
 		if (view !== "home") {
 			categoryRun.current += 1;
 			setCategory(null);
@@ -257,15 +263,26 @@ export function HomeScreen({
 	const openAlbum = (item: PlexAlbum | PlexHubItem) => {
 		if (!item.ratingKey) return;
 		const returnView = app.activeView;
+		setForwardAlbum(null);
 		setSelectedAlbum({ ratingKey: item.ratingKey, returnView });
 		if (returnView !== "albums") appState.setActiveView("albums");
 	};
 
 	const closeAlbum = () => {
-		const returnView = selectedAlbum?.returnView;
+		if (!selectedAlbum) return;
+		setForwardAlbum(selectedAlbum);
 		setSelectedAlbum(null);
-		if (returnView && appState.getSnapshot().activeView !== returnView) {
-			appState.setActiveView(returnView);
+		if (appState.getSnapshot().activeView !== selectedAlbum.returnView) {
+			appState.setActiveView(selectedAlbum.returnView);
+		}
+	};
+
+	const reopenAlbum = () => {
+		if (!forwardAlbum) return;
+		setSelectedAlbum(forwardAlbum);
+		setForwardAlbum(null);
+		if (appState.getSnapshot().activeView !== "albums") {
+			appState.setActiveView("albums");
 		}
 	};
 
@@ -350,10 +367,11 @@ export function HomeScreen({
 						</Icon>
 					</button>
 					<button
-						className="topbar-icon is-muted"
+						className="topbar-icon"
 						type="button"
 						aria-label="Forward"
-						disabled
+						disabled={!forwardAlbum}
+						onClick={reopenAlbum}
 					>
 						<Icon>
 							<path d="m9 18 6-6-6-6" />
@@ -374,6 +392,7 @@ export function HomeScreen({
 							onChange={(event) => {
 								const query = event.currentTarget.value.trim();
 								setSelectedAlbum(null);
+								setForwardAlbum(null);
 								appState.setSearchQuery(query);
 								appState.setActiveView(query ? "search" : "home");
 								categoryRun.current += 1;
