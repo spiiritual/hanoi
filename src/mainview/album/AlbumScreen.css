@@ -267,7 +267,7 @@
 .album-track-list-header,
 .album-track-row {
 	display: grid;
-	grid-template-columns: 32px minmax(0, 1fr) 60px;
+	grid-template-columns: 16px minmax(0, 1fr) 60px;
 	align-items: center;
 	column-gap: 12px;
 	padding: 0 8px;
@@ -310,6 +310,44 @@
 .album-track-duration {
 	color: var(--text-tertiary);
 	font-size: 13px;
+}
+
+.album-track-number {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 20px;
+}
+
+.album-track-index {
+	display: inline-flex;
+}
+
+.album-track-play {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	color: var(--text-primary);
+}
+
+.album-track-play svg {
+	width: 14px;
+	height: 14px;
+	fill: currentColor;
+	stroke: none;
+}
+
+.album-track-row:hover .album-track-index,
+.album-track-row:focus-within .album-track-index {
+	display: none;
+}
+
+.album-track-row:hover .album-track-play,
+.album-track-row:focus-within .album-track-play {
+	display: inline-flex;
 }
 
 .album-track-duration {

@@ -204,7 +204,14 @@ export function AlbumDetail({ ratingKey }: { ratingKey: string }) {
 										key={`${track.ratingKey}-${index}`}
 										role="listitem"
 									>
-										<span className="album-track-number">{track.index ?? index + 1}</span>
+										<span className="album-track-number">
+											<span className="album-track-index">{track.index ?? index + 1}</span>
+											<span className="album-track-play" aria-hidden="true">
+												<Icon>
+													<path d="m8 5 11 7-11 7z" />
+												</Icon>
+											</span>
+										</span>
 										<div className="album-track-copy">
 											<span className="album-track-title">{track.title}</span>
 											<span className="album-track-artist">
