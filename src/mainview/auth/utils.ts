@@ -1,6 +1,6 @@
 export async function hydrateAccountIfMissing<T>(
-	account: T | null | undefined,
-	loadAccount: () => Promise<T>,
+  account: T | null | undefined,
+  loadAccount: () => Promise<T>,
 ): Promise<T | null> {
-	return account ?? (await loadAccount());
+  return account ?? (await loadAccount());
 }

@@ -1,30 +1,30 @@
 .player-bar {
-	position: absolute;
-	right: 0;
-	bottom: 0;
-	left: 240px;
-	display: flex;
-	align-items: center;
-	gap: 20px;
-	height: 88px;
-	padding: 0 20px;
-	border: 1px solid #23232c;
-	background: #101015;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 240px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 88px;
+  padding: 0 20px;
+  border: 1px solid #23232c;
+  background: #101015;
 }
 
 .player-now-playing,
 .player-right-controls {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	width: 200px;
-	flex: 0 0 200px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 200px;
+  flex: 0 0 200px;
 }
 
 @media (max-width: 1040px) {
-	.player-now-playing,
-	.player-right-controls {
-		width: 168px;
-		flex-basis: 168px;
-	}
+  .player-now-playing,
+  .player-right-controls {
+    width: 168px;
+    flex-basis: 168px;
+  }
 }

@@ -8,12 +8,12 @@ import type { PlexTrack } from "./types.ts";
 
 /** Base URL + token pair needed to resolve Plex URLs. */
 export interface PlexUrlSource {
-	baseUrl: string;
-	token: string;
+  baseUrl: string;
+  token: string;
 }
 
 function withToken(url: string, token: string): string {
-	return `${url}${url.includes("?") ? "&" : "?"}X-Plex-Token=${token}`;
+  return `${url}${url.includes("?") ? "&" : "?"}X-Plex-Token=${token}`;
 }
 
 /**
@@ -21,25 +21,19 @@ function withToken(url: string, token: string): string {
  * full URL with the auth token. Absolute http(s) URLs pass through unchanged.
  * Returns null for empty input.
  */
-export function imageUrl(
-	source: PlexUrlSource,
-	path: string | undefined | null,
-): string | null {
-	if (!path) return null;
-	if (/^https?:\/\//.test(path)) return path;
-	return withToken(`${source.baseUrl}${path}`, source.token);
+export function imageUrl(source: PlexUrlSource, path: string | undefined | null): string | null {
+  if (!path) return null;
+  if (/^https?:\/\//.test(path)) return path;
+  return withToken(`${source.baseUrl}${path}`, source.token);
 }
 
 /** Resolve a Plex.tv account avatar path and attach the account token. */
-export function accountImageUrl(
-	path: string | undefined | null,
-	token: string,
-): string | null {
-	if (!path) return null;
-	const url = /^https?:\/\//i.test(path)
-		? path
-		: `https://plex.tv${path.startsWith("/") ? path : `/${path}`}`;
-	return withToken(url, token);
+export function accountImageUrl(path: string | undefined | null, token: string): string | null {
+  if (!path) return null;
+  const url = /^https?:\/\//i.test(path)
+    ? path
+    : `https://plex.tv${path.startsWith("/") ? path : `/${path}`}`;
+  return withToken(url, token);
 }
 
 /**
@@ -48,13 +42,13 @@ export function accountImageUrl(
  * `gAMA` chunk and no color profile). Returns null for empty input.
  */
 export function transcodedImageUrl(
-	source: PlexUrlSource,
-	path: string | undefined | null,
-	width: number,
-	height: number,
+  source: PlexUrlSource,
+  path: string | undefined | null,
+  width: number,
+  height: number,
 ): string | null {
-	if (!path) return null;
-	return `${source.baseUrl}/photo/:/transcode?width=${width}&height=${height}&url=${encodeURIComponent(path)}&X-Plex-Token=${source.token}`;
+  if (!path) return null;
+  return `${source.baseUrl}/photo/:/transcode?width=${width}&height=${height}&url=${encodeURIComponent(path)}&X-Plex-Token=${source.token}`;
 }
 
 /**
@@ -64,11 +58,11 @@ export function transcodedImageUrl(
  * directly from the server without proxying bytes through the main process.
  */
 export function streamUrl(
-	source: PlexUrlSource,
-	track: Pick<PlexTrack, "Media"> | undefined | null,
+  source: PlexUrlSource,
+  track: Pick<PlexTrack, "Media"> | undefined | null,
 ): string | null {
-	const part = track?.Media?.[0]?.Part?.[0];
-	const key = part?.key;
-	if (!key) return null;
-	return withToken(`${source.baseUrl}${key}`, source.token);
+  const part = track?.Media?.[0]?.Part?.[0];
+  const key = part?.key;
+  if (!key) return null;
+  return withToken(`${source.baseUrl}${key}`, source.token);
 }

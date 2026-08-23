@@ -13,6 +13,7 @@ A Plex API client for **hanoi**, an Electrobun desktop music player. Reference: 
 ## Screens the .pen defines (data needs)
 
 Auth flow:
+
 1. **Auth - Welcome** (`p19pw`) — branding, "Sign in with Plex" button. Static.
 2. **Auth - Plex OAuth** (`ENh1o`) — 6-char PIN code, `plex.tv/link` URL, copy/open buttons, "Waiting for authorization…" spinner, Cancel.
 3. **Auth - Server Selection** (`zNEof`) — server list (name + host + "· Alex Rivera"), check on selected.
@@ -20,16 +21,7 @@ Auth flow:
 5. **Sidebar - Server Selector Open** (`ulMII`) — dropdown: servers with name + "● Online"/"○ Offline" + check on current + "Add a server…" row.
 6. **Sidebar** (`XW0DC`) — new Server selector button (`lj0BM`) showing current server + "● Online" + chevron.
 
-Main app:
-7. **Home** (`u5JUT`) — "Recently Played" row, "Most Played in December" row.
-8. **Library - Albums** (`kyYc8`) — album grid, "Recently added" sort.
-9. **Library - Artists** (`CHlhF`) — artist grid with avatars, "Recently added" sort.
-10. **Library - Songs** (`yTrtY`) — song list with art + artist + duration, count ("128 songs").
-11. **Library - Playlists** (`ihxfy`) — playlist cards with "Focus · 42 songs" subtitles.
-12. **Search** (`PUB0k`) — split Songs/Albums/Artists columns.
-13. **Album detail** (`wpD45`, + Hover `ja658`, + Playing `c5EEyi`) — header ("Album · 2025 · 7 songs, 17 min 56 sec"), track list with #/title/artist/duration.
-14. **Playlist detail** (`sXOyv`, + Hover `Q6qOW`, + Playing `pq8Cr`) — header ("Playlist · 2026 · 42 songs, 2 hr 18 min"), track list.
-15. **Artist detail** (`fsy1m`) — header with genres + "Artist · 20 albums · 110 songs", "Your Top Songs" with "X plays", albums row with "year · X plays".
+Main app: 7. **Home** (`u5JUT`) — "Recently Played" row, "Most Played in December" row. 8. **Library - Albums** (`kyYc8`) — album grid, "Recently added" sort. 9. **Library - Artists** (`CHlhF`) — artist grid with avatars, "Recently added" sort. 10. **Library - Songs** (`yTrtY`) — song list with art + artist + duration, count ("128 songs"). 11. **Library - Playlists** (`ihxfy`) — playlist cards with "Focus · 42 songs" subtitles. 12. **Search** (`PUB0k`) — split Songs/Albums/Artists columns. 13. **Album detail** (`wpD45`, + Hover `ja658`, + Playing `c5EEyi`) — header ("Album · 2025 · 7 songs, 17 min 56 sec"), track list with #/title/artist/duration. 14. **Playlist detail** (`sXOyv`, + Hover `Q6qOW`, + Playing `pq8Cr`) — header ("Playlist · 2026 · 42 songs, 2 hr 18 min"), track list. 15. **Artist detail** (`fsy1m`) — header with genres + "Artist · 20 albums · 110 songs", "Your Top Songs" with "X plays", albums row with "year · X plays".
 
 ## File layout
 
@@ -55,45 +47,59 @@ Re-implement from `plexamp-cli/src/plex/types.ts`, then add fields the screens r
 
 Type additions vs. plexamp-cli:
 
-| Screen need | Field | Source |
-|---|---|---|
-| Album header "7 songs, 17 min 56 sec" | `leafCount`, total duration | `MediaContainer.leafCount` + sum of track `duration`; album metadata via `/library/metadata/{ratingKey}` |
-| Playlist header "42 songs, 2 hr 18 min" | `leafCount`, `duration` | already on `PlexPlaylist`; expose explicitly |
-| Artist header "20 albums · 110 songs", genres | album/song counts, `Genre[]` | `/library/metadata/{artistKey}` returns `Genre[]`; counts via filtered `getAllAlbums`/`getAllTracks` or `childCount`/`leafCount` |
-| Artist "Your Top Songs" with "X plays" | `viewCount` | already on tracks; expose explicitly on `PlexTrack`/`PlexHubItem` |
-| Home "Most Played in December" | time-windowed top by `viewCount` | `/library/sections/{key}/all?type=10&viewCount>=1&sort=viewCount:desc&addedAt>=…` |
-| Library "Recently added" sort | sort param | `…&sort=addedAt:desc` |
-| Search split columns | grouped results | extend `search` to return `{artists, albums, tracks}` |
-| Sidebar user "Alex Rivera" | account username | `/myplex/account` or Plex.tv `/api/v2/user` → `username`, `thumb` |
-| Connected card email + verified | `email`, `verified` | Plex.tv `/api/v2/user` |
-| Server online/offline | reachability | GET `/identity` with token, short timeout |
+| Screen need                                   | Field                            | Source                                                                                                                           |
+| --------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Album header "7 songs, 17 min 56 sec"         | `leafCount`, total duration      | `MediaContainer.leafCount` + sum of track `duration`; album metadata via `/library/metadata/{ratingKey}`                         |
+| Playlist header "42 songs, 2 hr 18 min"       | `leafCount`, `duration`          | already on `PlexPlaylist`; expose explicitly                                                                                     |
+| Artist header "20 albums · 110 songs", genres | album/song counts, `Genre[]`     | `/library/metadata/{artistKey}` returns `Genre[]`; counts via filtered `getAllAlbums`/`getAllTracks` or `childCount`/`leafCount` |
+| Artist "Your Top Songs" with "X plays"        | `viewCount`                      | already on tracks; expose explicitly on `PlexTrack`/`PlexHubItem`                                                                |
+| Home "Most Played in December"                | time-windowed top by `viewCount` | `/library/sections/{key}/all?type=10&viewCount>=1&sort=viewCount:desc&addedAt>=…`                                                |
+| Library "Recently added" sort                 | sort param                       | `…&sort=addedAt:desc`                                                                                                            |
+| Search split columns                          | grouped results                  | extend `search` to return `{artists, albums, tracks}`                                                                            |
+| Sidebar user "Alex Rivera"                    | account username                 | `/myplex/account` or Plex.tv `/api/v2/user` → `username`, `thumb`                                                                |
+| Connected card email + verified               | `email`, `verified`              | Plex.tv `/api/v2/user`                                                                                                           |
+| Server online/offline                         | reachability                     | GET `/identity` with token, short timeout                                                                                        |
 
 Concrete types:
 
 ```ts
-interface PlexTrack    { viewCount?: number; /* + existing fields */ }
-interface PlexAlbum    { viewCount?: number; leafCount?: number; }
-interface PlexArtist   { viewCount?: number; childCount?: number; }
-interface PlexGenre    { tag: string }
+interface PlexTrack {
+  viewCount?: number; /* + existing fields */
+}
+interface PlexAlbum {
+  viewCount?: number;
+  leafCount?: number;
+}
+interface PlexArtist {
+  viewCount?: number;
+  childCount?: number;
+}
+interface PlexGenre {
+  tag: string;
+}
 // Genre?: PlexGenre[] on artist/album/track
 
 interface PlexAccount {
   username: string;
   email: string;
   thumb?: string;
-  verified: boolean;   // drives Connected card's verified badge
+  verified: boolean; // drives Connected card's verified badge
 }
 
 interface PlexServerInfo {
   name: string;
   clientIdentifier: string;
-  url: string;         // best connection URI
-  token: string;       // per-server access token
+  url: string; // best connection URI
+  token: string; // per-server access token
   local: boolean;
-  online: boolean;     // from /identity reachability check
+  online: boolean; // from /identity reachability check
 }
 
-interface PlexMetadata { size?: number; leafCount?: number; duration?: number }
+interface PlexMetadata {
+  size?: number;
+  leafCount?: number;
+  duration?: number;
+}
 // covers MediaContainer totals from single-metadata calls
 ```
 
@@ -104,9 +110,9 @@ Same shape as plexamp-cli (`PlexConfig` with `clientIdentifier`, `token`, option
 ```ts
 interface PlexConfig {
   clientIdentifier: string;
-  token: string;                  // account token
+  token: string; // account token
   account?: { username: string; email: string; thumb?: string; verified: boolean };
-  server?: PlexServerConfig;      // selected server only; full list re-discovered each session
+  server?: PlexServerConfig; // selected server only; full list re-discovered each session
 }
 ```
 
@@ -133,7 +139,7 @@ Re-implement `PlexClient` with the same `request<T>` core (fetch + `X-Plex-Token
 ```ts
 interface BrowseOptions {
   sort?: "addedAt:desc" | "titleSort:asc" | "viewCount:desc" | "year:desc" | "lastViewedAt:desc";
-  filter?: string;            // raw Plex filter expression, e.g. "genre=Soundtrack"
+  filter?: string; // raw Plex filter expression, e.g. "genre=Soundtrack"
   limit?: number;
   offset?: number;
 }
@@ -141,41 +147,41 @@ interface BrowseOptions {
 
 ### Auth/account support (new vs plexamp-cli)
 
-| Method | Endpoint | Used by |
-|---|---|---|
-| `getAccount()` | Plex.tv `/api/v2/user` with X-Plex-Token | Sidebar user, Connected card |
-| `discoverServers(token, clientIdentifier)` | Plex.tv `/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1` | Server Selection, sidebar dropdown |
-| `checkServerStatus(url, token)` | GET `${url}/identity`, ~3s timeout → boolean | Sidebar dot, dropdown |
-| `getServers()` | `discoverServers` + parallel `/identity` probes for every candidate, selecting the first reachable connection → `PlexServerInfo[]` | Sidebar dropdown, Server Selection |
+| Method                                     | Endpoint                                                                                                                           | Used by                            |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `getAccount()`                             | Plex.tv `/api/v2/user` with X-Plex-Token                                                                                           | Sidebar user, Connected card       |
+| `discoverServers(token, clientIdentifier)` | Plex.tv `/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1`                                                            | Server Selection, sidebar dropdown |
+| `checkServerStatus(url, token)`            | GET `${url}/identity`, ~3s timeout → boolean                                                                                       | Sidebar dot, dropdown              |
+| `getServers()`                             | `discoverServers` + parallel `/identity` probes for every candidate, selecting the first reachable connection → `PlexServerInfo[]` | Sidebar dropdown, Server Selection |
 
 ### Browse
 
-| Method | Endpoint | Used by |
-|---|---|---|
-| `getSections()` | `/library/sections` | all library screens |
-| `getMusicSections()` | filter above | all music screens |
-| `getArtists(sectionKey, opts?)` | `…/all?type=8` + opts | Library Artists, Search |
-| `getAlbums(sectionKey, opts?)` | `…/all?type=9` + opts | Library Albums, Home, Search |
-| `getTracks(sectionKey, opts?)` | `…/all?type=10` + opts | Library Songs, Search |
-| `getItems<T>(sectionKey, type, opts?)` | generic — backs the above | internal |
-| `getPlaylists()` / `getMusicPlaylists()` | `/playlists` | Library Playlists |
+| Method                                   | Endpoint                  | Used by                      |
+| ---------------------------------------- | ------------------------- | ---------------------------- |
+| `getSections()`                          | `/library/sections`       | all library screens          |
+| `getMusicSections()`                     | filter above              | all music screens            |
+| `getArtists(sectionKey, opts?)`          | `…/all?type=8` + opts     | Library Artists, Search      |
+| `getAlbums(sectionKey, opts?)`           | `…/all?type=9` + opts     | Library Albums, Home, Search |
+| `getTracks(sectionKey, opts?)`           | `…/all?type=10` + opts    | Library Songs, Search        |
+| `getItems<T>(sectionKey, type, opts?)`   | generic — backs the above | internal                     |
+| `getPlaylists()` / `getMusicPlaylists()` | `/playlists`              | Library Playlists            |
 
 ### Detail
 
-| Method | Endpoint | Used by |
-|---|---|---|
-| `getMetadata(ratingKey)` | `/library/metadata/{ratingKey}` | Album/Playlist/Artist header (leafCount, duration, Genre[]) |
-| `getAlbumTracks(ratingKey)` | `/library/metadata/{ratingKey}/children` | Album detail |
-| `getArtistAlbums(ratingKey)` | filter `getAlbums` by `parentRatingKey`, or `/library/metadata/{ratingKey}/children` if Plex returns albums | Artist detail |
-| `getPlaylistTracks(playlistKey)` | `/playlists/{id}/items` (new) | Playlist detail |
+| Method                           | Endpoint                                                                                                    | Used by                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `getMetadata(ratingKey)`         | `/library/metadata/{ratingKey}`                                                                             | Album/Playlist/Artist header (leafCount, duration, Genre[]) |
+| `getAlbumTracks(ratingKey)`      | `/library/metadata/{ratingKey}/children`                                                                    | Album detail                                                |
+| `getArtistAlbums(ratingKey)`     | filter `getAlbums` by `parentRatingKey`, or `/library/metadata/{ratingKey}/children` if Plex returns albums | Artist detail                                               |
+| `getPlaylistTracks(playlistKey)` | `/playlists/{id}/items` (new)                                                                               | Playlist detail                                             |
 
 ### Home
 
-| Method | Endpoint | Used by |
-|---|---|---|
-| `getHomeHubs(identifiers?)` | `/hubs` plus `/library/sections`, `/hubs/sections/{key}`, and derived recent-play queries | Home's server-defined music row categories and audio playlists |
-| `getRecentlyPlayed()` | derived library query | Mixed artist/album/track recent-play feed |
-| `getMostPlayed(sinceMs?)` (new) | derived library query | Optional focused most-played view; not the Home row source |
+| Method                          | Endpoint                                                                                  | Used by                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `getHomeHubs(identifiers?)`     | `/hubs` plus `/library/sections`, `/hubs/sections/{key}`, and derived recent-play queries | Home's server-defined music row categories and audio playlists |
+| `getRecentlyPlayed()`           | derived library query                                                                     | Mixed artist/album/track recent-play feed                      |
+| `getMostPlayed(sinceMs?)` (new) | derived library query                                                                     | Optional focused most-played view; not the Home row source     |
 
 The Home view consumes the ordered `Hub[]` response from `getHomeHubs()` so
 Plex controls the row titles, identifiers, and category mix. Plex's global
@@ -192,24 +198,24 @@ carry `title`, `hubIdentifier`, `type`, `size`, and nested `Metadata` items.
 
 ### Search
 
-| Method | Endpoint | Used by |
-|---|---|---|
+| Method                                        | Endpoint                                             | Used by       |
+| --------------------------------------------- | ---------------------------------------------------- | ------------- |
 | `search(query)` → `{artists, albums, tracks}` | `/hubs/search?query=…&limit=20` then group by `type` | Search screen |
 
 ### Playback
 
-| Method | Endpoint | Used by |
-|---|---|---|
-| `streamUrl(track)` (new) | resolves `Media[0].Part[0].key` to `${baseUrl}${key}?X-Plex-Token=…` | Player Bar audio src |
-| `scrobble(key)` / `unscrobble(key)` (new) | `/:/scrobble?identifier=…&key=…` | "X plays" increment on track play |
+| Method                                    | Endpoint                                                             | Used by                           |
+| ----------------------------------------- | -------------------------------------------------------------------- | --------------------------------- |
+| `streamUrl(track)` (new)                  | resolves `Media[0].Part[0].key` to `${baseUrl}${key}?X-Plex-Token=…` | Player Bar audio src              |
+| `scrobble(key)` / `unscrobble(key)` (new) | `/:/scrobble?identifier=…&key=…`                                     | "X plays" increment on track play |
 
 ### URL helpers (split into `url.ts` so the view can import pure fns without the client)
 
-| Method | Purpose |
-|---|---|
-| `imageUrl(path)` | full thumb/art URL with token |
+| Method                           | Purpose                                           |
+| -------------------------------- | ------------------------------------------------- |
+| `imageUrl(path)`                 | full thumb/art URL with token                     |
 | `transcodedImageUrl(path, w, h)` | `/photo/:/transcode?width=&height=&url=` fallback |
-| `streamUrl(track)` | audio URL for `<audio src>` |
+| `streamUrl(track)`               | audio URL for `<audio src>`                       |
 
 Big binary blobs (cover art, audio) are **never** sent over RPC — the webview loads `http://…?X-Plex-Token=…` URLs directly as `<img src>` / `<audio src>` (no CORS issue for plain media GETs).
 
@@ -222,33 +228,60 @@ export type PlexRpc = defineElectrobunRPC<{
   bun: {
     requests: {
       // auth lifecycle
-      beginAuth:      { params: void; returns: { authUrl: string; pinCode: string } };
-      cancelAuth:     { params: void; returns: void };
-      selectServer:   { params: { clientIdentifier: string }; returns: void };
-      getAuthState:   { params: void; returns: { authenticated: boolean; hasServer: boolean; account?: PlexAccount; server?: PlexServerInfo } };
-      disconnect:     { params: void; returns: void };
+      beginAuth: { params: void; returns: { authUrl: string; pinCode: string } };
+      cancelAuth: { params: void; returns: void };
+      selectServer: { params: { clientIdentifier: string }; returns: void };
+      getAuthState: {
+        params: void;
+        returns: {
+          authenticated: boolean;
+          hasServer: boolean;
+          account?: PlexAccount;
+          server?: PlexServerInfo;
+        };
+      };
+      disconnect: { params: void; returns: void };
       // account + servers
-      getAccount:        { params: void; returns: PlexAccount };
-      getServers:        { params: void; returns: PlexServerInfo[] };
+      getAccount: { params: void; returns: PlexAccount };
+      getServers: { params: void; returns: PlexServerInfo[] };
       checkServerStatus: { params: void; returns: boolean };
       // browse
       getMusicSections: { params: void; returns: PlexSection[] };
-      getArtists:       { params: { sectionKey: string; opts?: BrowseOptions }; returns: PlexArtist[] };
-      getAlbums:        { params: { sectionKey: string; opts?: BrowseOptions }; returns: PlexAlbum[] };
-      getTracks:        { params: { sectionKey: string; opts?: BrowseOptions }; returns: PlexTrack[] };
-      getPlaylists:     { params: void; returns: PlexPlaylist[] };
+      getArtists: { params: { sectionKey: string; opts?: BrowseOptions }; returns: PlexArtist[] };
+      getAlbums: { params: { sectionKey: string; opts?: BrowseOptions }; returns: PlexAlbum[] };
+      getTracks: { params: { sectionKey: string; opts?: BrowseOptions }; returns: PlexTrack[] };
+      getPlaylists: { params: void; returns: PlexPlaylist[] };
       // detail
-      getAlbum:    { params: { ratingKey: string }; returns: { album: PlexAlbum; tracks: PlexTrack[] } };
-      getPlaylist: { params: { key: string }; returns: { playlist: PlexPlaylist; tracks: PlexTrack[] } };
-      getArtist:   { params: { ratingKey: string }; returns: { artist: PlexArtist; genres: string[]; albumCount: number; songCount: number; topTracks: PlexTrack[]; albums: PlexAlbum[] } };
+      getAlbum: {
+        params: { ratingKey: string };
+        returns: { album: PlexAlbum; tracks: PlexTrack[] };
+      };
+      getPlaylist: {
+        params: { key: string };
+        returns: { playlist: PlexPlaylist; tracks: PlexTrack[] };
+      };
+      getArtist: {
+        params: { ratingKey: string };
+        returns: {
+          artist: PlexArtist;
+          genres: string[];
+          albumCount: number;
+          songCount: number;
+          topTracks: PlexTrack[];
+          albums: PlexAlbum[];
+        };
+      };
       // home
       getRecentlyPlayed: { params: void; returns: PlexHubItem[] };
-      getMostPlayed:     { params: { sinceMs?: number }; returns: PlexHubItem[] };
+      getMostPlayed: { params: { sinceMs?: number }; returns: PlexHubItem[] };
       // search
-      search: { params: { query: string }; returns: { artists: PlexArtist[]; albums: PlexAlbum[]; tracks: PlexTrack[] } };
+      search: {
+        params: { query: string };
+        returns: { artists: PlexArtist[]; albums: PlexAlbum[]; tracks: PlexTrack[] };
+      };
       // playback
       streamUrl: { params: { ratingKey: string }; returns: string };
-      scrobble:  { params: { key: string }; returns: void };
+      scrobble: { params: { key: string }; returns: void };
     };
     messages: {};
   };
@@ -276,7 +309,7 @@ Thin typed wrapper:
 ```ts
 import { Electroview } from "electrobun/view";
 import type { PlexRpc } from "../bun/plex/rpc-schema";
-const rpc = Electroview.rpc<PlexRpc>();   // confirm exact API against Electroview docs at impl time
+const rpc = Electroview.rpc<PlexRpc>(); // confirm exact API against Electroview docs at impl time
 export const plex = {
   beginAuth: () => rpc.request.beginAuth(),
   getAccount: () => rpc.request.getAccount(),

@@ -4,6 +4,8 @@ This project uses Pen to design the interface. The Pen project file is in the "p
 
 This project seperates views by folder in the "mainview" folder. Each view has its own folder, which includes the React, HTML, CSS, and TypeScript files for that particular view.
 
-This project uses react-doctor to find issues in the React code. To run react-doctor, use the command "npx react-doctor@latest --json --yes" from the project root. Run react-doctor everytime you change React code.
+After making any changes, run "npm run lint:agent", then "npx oxfmt".
+
+This project uses react-doctor to find issues in the React code. To run react-doctor, use the command "npx react-doctor@latest --json --yes --scope changed" from the project root. Run react-doctor everytime you change React code.
 
 When running the app for testing purposes, use "hutch run dev" to start the app in development mode. Do not build the whole app for testing.

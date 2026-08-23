@@ -5,6 +5,7 @@ A simple Electrobun app to get you started with the framework.
 ## What You'll See
 
 This hello world app demonstrates:
+
 - **Native Window**: A cross-platform desktop window
 - **Web-based UI**: Modern HTML, CSS, and JavaScript interface
 - **Simple Architecture**: Clean separation between Cottontail process and UI
@@ -12,11 +13,13 @@ This hello world app demonstrates:
 ## Getting Started
 
 1. Install dependencies:
+
    ```bash
    hutch run install
    ```
 
 2. Run in development mode:
+
    ```bash
    hutch run dev
    ```
@@ -49,6 +52,7 @@ Ready to build something more complex? Check out:
 ### Add More Features
 
 Want to extend this app? Try adding:
+
 - RPC communication between Cottontail and webview
 - Native menus and system tray
 - File dialogs and system integration

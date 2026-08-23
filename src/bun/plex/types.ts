@@ -6,19 +6,19 @@
  * lives here.
  */
 export type {
-	PlexAlbum,
-	PlexArtist,
-	PlexConnection,
-	PlexGenre,
-	PlexHub,
-	PlexHubItem,
-	PlexMedia,
-	PlexMetadata,
-	PlexPin,
-	PlexPlaylist,
-	PlexSection,
-	PlexServerResource,
-	PlexTrack,
+  PlexAlbum,
+  PlexArtist,
+  PlexConnection,
+  PlexGenre,
+  PlexHub,
+  PlexHubItem,
+  PlexMedia,
+  PlexMetadata,
+  PlexPin,
+  PlexPlaylist,
+  PlexSection,
+  PlexServerResource,
+  PlexTrack,
 } from "./schemas.ts";
 
 /**
@@ -27,21 +27,21 @@ export type {
  * which drives the Connected card's verified badge.
  */
 export interface PlexAccount {
-	username: string;
-	email: string;
-	thumb?: string;
-	verified: boolean;
+  username: string;
+  email: string;
+  thumb?: string;
+  verified: boolean;
 }
 
 /** A discovered server, ready for the Server Selection screen and dropdown. */
 export interface PlexServerInfo {
-	name: string;
-	clientIdentifier: string;
-	/** Best connection URI (local connection preferred). */
-	url: string;
-	/** Per-server access token from the resource. */
-	token: string;
-	local: boolean;
-	/** From the `/identity` reachability check. */
-	online: boolean;
+  name: string;
+  clientIdentifier: string;
+  /** Best connection URI (local connection preferred). */
+  url: string;
+  /** Per-server access token from the resource. */
+  token: string;
+  local: boolean;
+  /** From the `/identity` reachability check. */
+  online: boolean;
 }
