@@ -4,6 +4,7 @@ import { hydrateAccountIfMissing } from "./utils.ts";
 import { appState } from "../view-state.ts";
 import { plex } from "../plex.ts";
 import type { Account, Server } from "../types.ts";
+import { AuthLayout, AuthSpacer } from "./AuthLayout.tsx";
 import { ConnectedScreen } from "./ConnectedScreen.tsx";
 import { OAuthScreen } from "./OAuthScreen.tsx";
 import { ServerSelectionScreen } from "./ServerSelectionScreen.tsx";
@@ -13,6 +14,7 @@ export const authStages = ["welcome", "oauth", "connected", "servers"] as const;
 export type AuthStage = (typeof authStages)[number];
 
 const AUTH_TRANSITION_MS = 420;
+const AUTH_STARTUP_MIN_MS = 700;
 
 export type AuthCompletion = {
 	account: Account | null;
@@ -28,6 +30,10 @@ export function AuthFlow({
 	onComplete: (completion: AuthCompletion) => void;
 }) {
 	const [stage, setStage] = useState<AuthStage>(initialStage);
+	const [startupChecking, setStartupChecking] = useState(
+		initialStage === "welcome",
+	);
+	const [startupStartedAt] = useState(() => Date.now());
 	const [account, setAccount] = useState<Account | null>(null);
 	const [servers, setServers] = useState<Server[]>([]);
 	const [serverLoading, setServerLoading] = useState(false);
@@ -70,6 +76,16 @@ export function AuthFlow({
 		if (initialStage !== "welcome") return;
 		let cancelled = false;
 		void (async () => {
+			const finishStartup = async (): Promise<boolean> => {
+				const remaining = AUTH_STARTUP_MIN_MS - (Date.now() - startupStartedAt);
+				if (remaining > 0) {
+					await new Promise<void>((resolve) => {
+						window.setTimeout(resolve, remaining);
+					});
+				}
+				return !cancelled && stageRef.current === "welcome";
+			};
+
 			try {
 				const state = await plex.getAuthState();
 				const foundAccount =
@@ -79,7 +95,7 @@ export function AuthFlow({
 								() => null,
 							)
 						: null);
-				if (cancelled || stageRef.current !== "welcome") return;
+				if (!(await finishStartup())) return;
 				setAccount(foundAccount);
 				if (state.hasServer && state.authenticated) {
 					const server = state.server ?? null;
@@ -94,15 +110,21 @@ export function AuthFlow({
 					});
 				} else if (state.authenticated) {
 					transitionTo("connected");
+					setStartupChecking(false);
+				} else {
+					setStartupChecking(false);
 				}
 			} catch {
-				if (!cancelled && stageRef.current === "welcome") transitionTo("welcome");
+				if (await finishStartup()) {
+					setStartupChecking(false);
+					transitionTo("welcome");
+				}
 			}
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [initialStage, onComplete, transitionTo]);
+	}, [initialStage, onComplete, startupStartedAt, transitionTo]);
 
 	const startAuth = useCallback(() => {
 		transitionTo("oauth");
@@ -220,6 +242,27 @@ export function AuthFlow({
 				return <WelcomeScreen onSignIn={startAuth} />;
 		}
 	};
+
+	if (startupChecking) {
+		return (
+			<div className="auth-stage-stack">
+				<div className="auth-stage" aria-busy="true">
+					<AuthLayout>
+						<div className="logo-mark" aria-hidden="true">
+							H
+						</div>
+						<AuthSpacer height={12} />
+						<h1 className="app-name">Hanoi</h1>
+						<AuthSpacer height={36} />
+						<div className="status-row" aria-live="polite">
+							<div className="spinner" />
+							<div className="status-text">Checking your Plex account…</div>
+						</div>
+					</AuthLayout>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div className="auth-stage-stack">

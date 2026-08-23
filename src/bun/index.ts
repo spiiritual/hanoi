@@ -308,8 +308,21 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
 			},
 			async getAuthState() {
 				const cfg = config;
+				// Auth state is local and should be available immediately. Do not make
+				// startup wait for server discovery and its 3s reachability probes.
 				const server =
-					cfg?.server && cfg.token ? await getSavedServerSummary(cfg) : undefined;
+					cfg?.server && cfg.token
+						? {
+								name: cfg.server.name,
+								clientIdentifier: cfg.server.clientIdentifier ?? cfg.clientIdentifier,
+								url: cfg.server.url,
+							}
+						: undefined;
+				if (cfg?.server && cfg.token) {
+					// Refresh the endpoint and active client in the background. The
+					// persisted server is enough to choose the initial app view.
+					void getSavedServerSummary(cfg);
+				}
 				return {
 					authenticated: Boolean(cfg?.token),
 					hasServer: Boolean(server),
