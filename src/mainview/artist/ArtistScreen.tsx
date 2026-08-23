@@ -3,7 +3,7 @@ import type { PlexAlbum, PlexArtist, PlexSection, PlexTrack } from "../../bun/pl
 import { Icon } from "../components/Icon.tsx";
 import type { ShellView } from "../app-state.ts";
 import { plex } from "../plex.ts";
-import { ArtworkImage } from "../ArtworkImage.tsx";
+import { ArtworkImage } from "../artwork/ArtworkImage.tsx";
 import { playerState } from "../view-state.ts";
 import { MediaCard } from "../home/HomeContent.tsx";
 

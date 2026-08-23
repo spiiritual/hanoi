@@ -1,4 +1,4 @@
-import { ArtworkImage } from "../ArtworkImage.tsx";
+import { ArtworkImage } from "../artwork/ArtworkImage.tsx";
 import {
   filterMusicHomeHubs,
   HOME_HUB_PREVIEW_SIZE,

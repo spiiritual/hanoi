@@ -13,14 +13,14 @@ import {
 import { findPersistedServer, savedServerNeedsRefresh } from "./plex/server-selection.ts";
 import { streamUrl as resolveStreamUrl } from "./plex/url.ts";
 import type { PlexAccount, PlexServerInfo, PlexTrack } from "./plex/types.ts";
-import { ArtworkCache } from "./plex/artwork-cache.ts";
-import type { ArtworkVariant } from "./plex/artwork-types.ts";
+import { ArtworkCache } from "./plex/artwork/cache.ts";
+import type { ArtworkVariant } from "./plex/artwork/types.ts";
 import {
   artworkNamespace,
   createArtworkFetcher,
   isSameArtworkSession,
   toArtworkRpcResult,
-} from "./plex/artwork-fetcher.ts";
+} from "./plex/artwork/fetcher.ts";
 
 let config = loadConfig();
 const artworkCache = new ArtworkCache(join(Utils.paths.userCache, "artwork"));

@@ -1,7 +1,7 @@
 import { Electroview } from "electrobun/view";
 import type { PlexRpc } from "../bun/plex/rpc-schema.ts";
 import type { BrowseOptions } from "../bun/plex/client.ts";
-import type { ArtworkVariant } from "../bun/plex/artwork-types.ts";
+import type { ArtworkVariant } from "../bun/plex/artwork/types.ts";
 
 const rpc = Electroview.defineRPC<PlexRpc>({
   maxRequestTime: 60_000,

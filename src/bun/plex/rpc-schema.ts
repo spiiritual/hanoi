@@ -17,7 +17,7 @@ import type {
   PlexTrack,
 } from "./types.ts";
 import type { BrowseOptions } from "./client.ts";
-import type { ArtworkRpcResult, ArtworkVariant } from "./artwork-types.ts";
+import type { ArtworkRpcResult, ArtworkVariant } from "./artwork/types.ts";
 
 /**
  * Server info as seen by the view — the per-server token never leaves the

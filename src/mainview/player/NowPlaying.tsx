@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { ArtworkImage } from "../ArtworkImage.tsx";
+import { ArtworkImage } from "../artwork/ArtworkImage.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { playerState } from "../view-state.ts";
 

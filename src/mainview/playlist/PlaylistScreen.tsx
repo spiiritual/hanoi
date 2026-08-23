@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PlexPlaylist, PlexTrack } from "../../bun/plex/types.ts";
 import { Icon } from "../components/Icon.tsx";
 import { plex } from "../plex.ts";
-import { ArtworkImage } from "../ArtworkImage.tsx";
+import { ArtworkImage } from "../artwork/ArtworkImage.tsx";
 import { playerState } from "../view-state.ts";
 
 function formatTrackDuration(duration?: number): string {

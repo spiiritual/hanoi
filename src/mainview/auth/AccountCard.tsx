@@ -1,4 +1,4 @@
-import { ArtworkImage } from "../ArtworkImage.tsx";
+import { ArtworkImage } from "../artwork/ArtworkImage.tsx";
 import { initials } from "../utils.ts";
 import type { Account } from "../types.ts";
 
