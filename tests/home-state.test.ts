@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { PlexHub } from "../src/bun/plex/types.ts";
-import { createHomeState, filterMusicHomeHubs } from "../src/mainview/home-state.ts";
+import { createHomeState } from "../src/mainview/home/state.ts";
+import { filterMusicHomeHubs } from "../src/mainview/home/utils.ts";
 
 const recentlyPlayed = {
 	key: "/hubs/home/music/recent",
@@ -117,7 +118,9 @@ test("failed home hub loads expose an error and can be retried", async () => {
 	});
 	homeState.setServer("server-1");
 
-	await expect(homeState.loadHomeHubs()).rejects.toThrow("Plex home unavailable");
+	await expect(homeState.loadHomeHubs()).rejects.toThrow(
+		"Plex home unavailable",
+	);
 	expect(homeState.getSnapshot()).toMatchObject({
 		status: "error",
 		error: "Plex home unavailable",

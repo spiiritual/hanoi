@@ -1,12 +1,28 @@
-import type { PlexHubItem } from "../bun/plex/types.ts";
-import type { PlexHub } from "../bun/plex/types.ts";
+import type { PlexHub, PlexHubItem } from "../../bun/plex/types.ts";
 
 export const HOME_HUB_PREVIEW_SIZE = 6;
+
+const musicItemTypes = new Set(["artist", "album", "track", "playlist"]);
+
+function isMusicHomeItem(item: PlexHubItem): boolean {
+	if (!musicItemTypes.has(item.type)) return false;
+	return item.type !== "playlist" || item.playlistType !== "video";
+}
+
+/** Keep Plex's row order while omitting non-music rows and cards. */
+export function filterMusicHomeHubs(hubs: PlexHub[]): PlexHub[] {
+	return hubs.flatMap((hub) => {
+		const metadata = (hub.Metadata ?? []).filter(isMusicHomeItem);
+		return metadata.length > 0 ? [{ ...hub, Metadata: metadata }] : [];
+	});
+}
 
 export type HomeHubItemInteraction = "track" | "other";
 
 /** Interaction affordance shown for a Plex Home card. */
-export function homeHubItemInteraction(item: PlexHubItem): HomeHubItemInteraction {
+export function homeHubItemInteraction(
+	item: PlexHubItem,
+): HomeHubItemInteraction {
 	if (item.type === "track") return "track";
 	return "other";
 }
@@ -19,19 +35,24 @@ export function shouldShowHomeHubSeeAll(hub: PlexHub): boolean {
 /** Text shown beneath cards in a Plex Home row. */
 export function homeHubItemMeta(item: PlexHubItem): string {
 	if (item.type === "track") {
-		return [item.grandparentTitle, item.parentTitle].filter(Boolean).join(" · ") || "Song";
+		return (
+			[item.grandparentTitle, item.parentTitle].filter(Boolean).join(" · ") ||
+			"Song"
+		);
 	}
 	if (item.type === "album") {
 		return item.parentTitle || "Unknown artist";
 	}
 	if (item.type === "artist") return "Artist";
 	if (item.type === "playlist") {
-		return [
-			item.playlistType === "audio" ? "Playlist" : item.playlistType,
-			item.leafCount ? `${item.leafCount} songs` : undefined,
-		]
-			.filter(Boolean)
-			.join(" · ") || "Playlist";
+		return (
+			[
+				item.playlistType === "audio" ? "Playlist" : item.playlistType,
+				item.leafCount ? `${item.leafCount} songs` : undefined,
+			]
+				.filter(Boolean)
+				.join(" · ") || "Playlist"
+		);
 	}
 	return item.type;
 }

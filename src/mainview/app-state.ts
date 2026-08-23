@@ -1,6 +1,13 @@
 import type { PlexSection } from "../bun/plex/types.ts";
 
-export const shellViews = ["home", "albums", "artists", "songs", "playlists", "search"] as const;
+export const shellViews = [
+	"home",
+	"albums",
+	"artists",
+	"songs",
+	"playlists",
+	"search",
+] as const;
 export type ShellView = (typeof shellViews)[number];
 
 export type MusicSectionsStatus = "idle" | "loading" | "ready" | "error";
@@ -28,7 +35,9 @@ interface AppStateOptions {
 	loadMusicSections: () => Promise<PlexSection[]>;
 }
 
-export function createAppState({ loadMusicSections }: AppStateOptions): AppState {
+export function createAppState({
+	loadMusicSections,
+}: AppStateOptions): AppState {
 	let state: AppStateSnapshot = {
 		activeView: "home",
 		searchQuery: "",
@@ -41,15 +50,16 @@ export function createAppState({ loadMusicSections }: AppStateOptions): AppState
 	let requestGeneration = 0;
 	let musicSectionsPromise: Promise<PlexSection[]> | null = null;
 	const listeners = new Set<(snapshot: AppStateSnapshot) => void>();
-
-	const snapshot = (): AppStateSnapshot => ({
+	let stableSnapshot: AppStateSnapshot = {
 		...state,
-		musicSections: [...state.musicSections],
-	});
+		musicSections: [],
+	};
+
+	const snapshot = (): AppStateSnapshot => stableSnapshot;
 
 	const notify = (): void => {
-		const current = snapshot();
-		for (const listener of listeners) listener(current);
+		stableSnapshot = { ...state, musicSections: [...state.musicSections] };
+		for (const listener of listeners) listener(stableSnapshot);
 	};
 
 	return {
@@ -72,10 +82,10 @@ export function createAppState({ loadMusicSections }: AppStateOptions): AppState
 			if (state.selectedServer === clientIdentifier) return;
 			requestGeneration += 1;
 			musicSectionsPromise = null;
-				state = {
-					...state,
-					searchGeneration: state.searchGeneration + 1,
-					selectedServer: clientIdentifier,
+			state = {
+				...state,
+				searchGeneration: state.searchGeneration + 1,
+				selectedServer: clientIdentifier,
 				musicSections: [],
 				musicSectionsStatus: "idle",
 				musicSectionsError: null,
@@ -100,7 +110,11 @@ export function createAppState({ loadMusicSections }: AppStateOptions): AppState
 
 			const generation = requestGeneration;
 			const server = state.selectedServer;
-			state = { ...state, musicSectionsStatus: "loading", musicSectionsError: null };
+			state = {
+				...state,
+				musicSectionsStatus: "loading",
+				musicSectionsError: null,
+			};
 			notify();
 
 			const request = loadMusicSections()
@@ -118,7 +132,10 @@ export function createAppState({ loadMusicSections }: AppStateOptions): AppState
 				})
 				.catch((cause: unknown) => {
 					if (generation === requestGeneration && state.selectedServer === server) {
-						const message = cause instanceof Error ? cause.message : "Failed to load Plex music sections";
+						const message =
+							cause instanceof Error
+								? cause.message
+								: "Failed to load Plex music sections";
 						state = {
 							...state,
 							musicSectionsStatus: "error",

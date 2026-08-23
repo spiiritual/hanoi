@@ -3,9 +3,13 @@
 	"version": "1.0.0",
 	"description": "A simple Electrobun app showcasing core features",
 	"devDependencies": {
-		"@types/bun": "latest"
+		"@types/bun": "latest",
+		"@types/react": "^19.2.18",
+		"@types/react-dom": "^19.2.4"
 	},
 	"dependencies": {
+		"react": "^19.2.8",
+		"react-dom": "^19.2.8",
 		"zod": "^4.4.3"
 	}
 }

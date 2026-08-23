@@ -1,0 +1,30 @@
+.player-right-controls {
+	justify-content: flex-end;
+}
+
+.player-right-controls > svg {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	width: 18px;
+	height: 18px;
+	color: var(--text-secondary);
+}
+
+.player-volume-track {
+	position: relative;
+	overflow: hidden;
+	border-radius: 2px;
+	background: #2c2c36;
+	width: 100px;
+	height: 4px;
+}
+
+.player-volume-track span {
+	display: block;
+	width: 0;
+	height: 100%;
+	background: var(--accent);
+}

@@ -4,7 +4,7 @@ import {
 	homeHubItemMeta,
 	homeHubItemInteraction,
 	shouldShowHomeHubSeeAll,
-} from "../src/mainview/home-display.ts";
+} from "../src/mainview/home/utils.ts";
 import type { PlexHub } from "../src/bun/plex/types.ts";
 
 test("Home shows See all when Plex returned a capped six-card preview", () => {

@@ -50,7 +50,10 @@ export interface BrowseOptions {
 const DEFAULT_STATUS_TIMEOUT_MS = 3000;
 const RECENTLY_PLAYED_HUB_PREFIX = "music.recent.played.";
 
-export type ServerConnectionProbe = (url: string, token: string) => Promise<boolean>;
+export type ServerConnectionProbe = (
+	url: string,
+	token: string,
+) => Promise<boolean>;
 
 function isAudioHomeItem(item: PlexHubItem): boolean {
 	return (
@@ -76,7 +79,10 @@ function hasAudioPlaylist(hub: PlexHub): boolean {
  * endpoints. Use the music-library order as the main home surface, then keep
  * useful global audio playlist rows that are not part of that response.
  */
-export function composeHomeHubs(sectionHubs: PlexHub[], globalHubs: PlexHub[]): PlexHub[] {
+export function composeHomeHubs(
+	sectionHubs: PlexHub[],
+	globalHubs: PlexHub[],
+): PlexHub[] {
 	const musicRows = sectionHubs.filter(hasAudioHomeItems);
 	if (musicRows.length === 0) return globalHubs.filter(hasAudioHomeItems);
 
@@ -147,7 +153,9 @@ export class PlexClient {
 			},
 		});
 		if (!res.ok) {
-			throw new Error(`Plex request failed: ${res.status} ${res.statusText} for ${path}`);
+			throw new Error(
+				`Plex request failed: ${res.status} ${res.statusText} for ${path}`,
+			);
 		}
 		const contentType = res.headers.get("content-type") ?? "";
 		if (!contentType.includes("json")) {
@@ -172,7 +180,9 @@ export class PlexClient {
 			},
 		});
 		if (!res.ok) {
-			throw new Error(`Plex request failed: ${res.status} ${res.statusText} for ${path}`);
+			throw new Error(
+				`Plex request failed: ${res.status} ${res.statusText} for ${path}`,
+			);
 		}
 		// Drain the body so the connection is reusable.
 		await res.arrayBuffer();
@@ -206,12 +216,15 @@ export class PlexClient {
 		let schema: z.ZodType<T> | undefined;
 		switch (type) {
 			case 8:
+				// SAFETY: Plex type 8 items are validated as artists before returning as T.
 				schema = artistSchema as unknown as z.ZodType<T>;
 				break;
 			case 9:
+				// SAFETY: Plex type 9 items are validated as albums before returning as T.
 				schema = albumSchema as unknown as z.ZodType<T>;
 				break;
 			case 10:
+				// SAFETY: Plex type 10 items are validated as tracks before returning as T.
 				schema = trackSchema as unknown as z.ZodType<T>;
 				break;
 		}
@@ -230,6 +243,7 @@ export class PlexClient {
 		const items = mc?.Metadata ?? [];
 		if (items.length > 0) {
 			const sample = items[0] as { type?: string };
+			// SAFETY: The sample's runtime type selects the schema that validates every item as T.
 			const schema: z.ZodType<T> | undefined =
 				sample.type === "album"
 					? (albumSchema as unknown as z.ZodType<T>)
@@ -244,13 +258,19 @@ export class PlexClient {
 				const parsed = filterItems(schema, items as unknown[], path);
 				return { items: parsed, totals: this.totals(mc ?? {}) };
 			} else {
-				console.error(`Plex response validation skipped for unknown item type (${path}): ${String(sample.type)}`);
+				console.error(
+					`Plex response validation skipped for unknown item type (${path}): ${String(sample.type)}`,
+				);
 			}
 		}
 		return { items, totals: this.totals(mc ?? {}) };
 	}
 
-	private totals(envelope: { size?: number; leafCount?: number; duration?: number }): PlexMetadata {
+	private totals(envelope: {
+		size?: number;
+		leafCount?: number;
+		duration?: number;
+	}): PlexMetadata {
 		return {
 			size: envelope.size,
 			leafCount: envelope.leafCount,
@@ -379,9 +399,19 @@ export class PlexClient {
 	 * the Search screen's split Songs/Albums/Artists columns. Playlists are
 	 * excluded; the result is exactly `{artists, albums, tracks}`.
 	 */
-	async search(query: string): Promise<{ artists: PlexArtist[]; albums: PlexAlbum[]; tracks: PlexTrack[] }> {
+	async search(
+		query: string,
+	): Promise<{
+		artists: PlexArtist[];
+		albums: PlexAlbum[];
+		tracks: PlexTrack[];
+	}> {
 		const trimmed = query.trim();
-		const empty: { artists: PlexArtist[]; albums: PlexAlbum[]; tracks: PlexTrack[] } = {
+		const empty: {
+			artists: PlexArtist[];
+			albums: PlexAlbum[];
+			tracks: PlexTrack[];
+		} = {
 			artists: [],
 			albums: [],
 			tracks: [],
@@ -419,18 +449,22 @@ export class PlexClient {
 	 * direct global-hub query for callers that need a specific hub set.
 	 */
 	async getHomeHubs(identifiers?: string[]): Promise<PlexHub[]> {
-		const query = identifiers?.length ? `?identifier=${identifiers.join(",")}` : "";
+		const query = identifiers?.length
+			? `?identifier=${identifiers.join(",")}`
+			: "";
 		if (identifiers?.length) {
 			return this.parseContainerArray<PlexHub>(`/hubs${query}`, hubSchema, "Hub");
 		}
 
-		const globalHubs = await this.parseContainerArray<PlexHub>("/hubs", hubSchema, "Hub");
-		const sections = await this.getMusicSections();
+		const [globalHubs, sections] = await Promise.all([
+			this.parseContainerArray<PlexHub>("/hubs", hubSchema, "Hub"),
+			this.getMusicSections(),
+		]);
 		if (sections.length === 0) return globalHubs;
 		const [sectionHubs, recentlyPlayed] = await Promise.all([
-			Promise.all(sections.map((section) => this.getSectionHubs(section.key))).then((hubs) =>
-				hubs.flat(),
-			),
+			Promise.all(
+				sections.map((section) => this.getSectionHubs(section.key)),
+			).then((hubs) => hubs.flat()),
 			this.getRecentlyPlayedForSections(sections),
 		]);
 		return replaceRecentlyPlayedPreview(
@@ -507,7 +541,8 @@ export class PlexClient {
 		const sections = await this.getMusicSections();
 		const perSection = await Promise.all(
 			sections.map(async (section) => {
-				const since = sinceMs !== undefined ? new Date(sinceMs).getTime() / 1000 : undefined;
+				const since =
+					sinceMs !== undefined ? new Date(sinceMs).getTime() / 1000 : undefined;
 				return this.parseContainerArray<PlexHubItem>(
 					`/library/sections/${section.key}/all?viewCount%3E=1&type=10&sort=viewCount:desc${since !== undefined ? `&addedAt%3E=${Math.floor(since)}` : ""}`,
 					hubItemSchema,
@@ -548,7 +583,12 @@ export class PlexClient {
 			"Metadata",
 		);
 		return {
-			album: album ?? { ratingKey: String(ratingKey), key: "", type: "album", title: "" },
+			album: album ?? {
+				ratingKey: String(ratingKey),
+				key: "",
+				type: "album",
+				title: "",
+			},
 			tracks: tracks.filter((item) => item.type === "track"),
 		};
 	}
@@ -563,7 +603,9 @@ export class PlexClient {
 		albums: PlexAlbum[];
 	}> {
 		const { items } = await this.getMetadata<{ type: string }>(ratingKey);
-		const artist = items.find((i) => i.type === "artist") as PlexArtist | undefined;
+		const artist = items.find((i) => i.type === "artist") as
+			| PlexArtist
+			| undefined;
 		const genres = artist?.Genre?.map((g) => g.tag) ?? [];
 
 		// Plex does not populate childCount/leafCount on artist metadata, so
@@ -602,20 +644,31 @@ export class PlexClient {
 		const totalAlbums = perSection.reduce((n, s) => n + s.albums.length, 0);
 
 		const seenTracks = new Set<string>();
-		const tracks = perSection.flatMap((s) => s.tracks).filter((item) => {
-			if (seenTracks.has(item.ratingKey)) return false;
-			seenTracks.add(item.ratingKey);
-			return true;
-		});
+		const tracks = perSection.reduce<PlexTrack[]>((unique, section) => {
+			return section.tracks.reduce((items, item) => {
+				if (seenTracks.has(item.ratingKey)) return items;
+				seenTracks.add(item.ratingKey);
+				items.push(item);
+				return items;
+			}, unique);
+		}, []);
 		const seenAlbums = new Set<string>();
-		const albums = perSection.flatMap((s) => s.albums).filter((item) => {
-			if (seenAlbums.has(item.ratingKey)) return false;
-			seenAlbums.add(item.ratingKey);
-			return true;
-		});
+		const albums = perSection.reduce<PlexAlbum[]>((unique, section) => {
+			return section.albums.reduce((items, item) => {
+				if (seenAlbums.has(item.ratingKey)) return items;
+				seenAlbums.add(item.ratingKey);
+				items.push(item);
+				return items;
+			}, unique);
+		}, []);
 
 		return {
-			artist: artist ?? { ratingKey: String(ratingKey), key: "", type: "artist", title: "" },
+			artist: artist ?? {
+				ratingKey: String(ratingKey),
+				key: "",
+				type: "artist",
+				title: "",
+			},
 			genres,
 			albumCount: totalAlbums || artist?.childCount || 0,
 			songCount: totalSongs || artist?.leafCount || 0,
@@ -669,7 +722,10 @@ export class PlexClient {
 	}
 
 	/** Reachability of a server: GET `/identity` with the token, ~3s timeout. */
-	async checkServerStatus(url: string, token: string = this.token): Promise<boolean> {
+	async checkServerStatus(
+		url: string,
+		token: string = this.token,
+	): Promise<boolean> {
 		return checkPlexServerStatus(url, token);
 	}
 
@@ -678,11 +734,15 @@ export class PlexClient {
 	 * increments/decrements the `viewCount` that powers "X plays".
 	 */
 	async scrobble(key: string): Promise<void> {
-		await this.requestRaw(`/:/scrobble?identifier=com.plexapp.plugins.library&key=${encodeURIComponent(key)}`);
+		await this.requestRaw(
+			`/:/scrobble?identifier=com.plexapp.plugins.library&key=${encodeURIComponent(key)}`,
+		);
 	}
 
 	async unscrobble(key: string): Promise<void> {
-		await this.requestRaw(`/:/unscrobble?identifier=com.plexapp.plugins.library&key=${encodeURIComponent(key)}`);
+		await this.requestRaw(
+			`/:/unscrobble?identifier=com.plexapp.plugins.library&key=${encodeURIComponent(key)}`,
+		);
 	}
 
 	/** Resolve a relative Plex image path (e.g. `thumb`, `art`) to a full URL with the token. */
@@ -725,12 +785,16 @@ export async function getPlexAccount(token: string): Promise<PlexAccount> {
 		},
 	});
 	if (!res.ok) {
-		throw new Error(`Failed to fetch Plex account: ${res.status} ${res.statusText}`);
+		throw new Error(
+			`Failed to fetch Plex account: ${res.status} ${res.statusText}`,
+		);
 	}
 	const user = (await res.json()) as unknown;
 	const parsed = parseStrict(plexAccountSchema, user, "plex.tv /api/v2/user");
 	if (!parsed) {
-		throw new Error("Failed to fetch Plex account: unexpected response from plex.tv");
+		throw new Error(
+			"Failed to fetch Plex account: unexpected response from plex.tv",
+		);
 	}
 	// plex.tv reports account confirmation as `confirmed`; the app's domain
 	// shape calls it `verified` (drives the Connected card's verified badge).

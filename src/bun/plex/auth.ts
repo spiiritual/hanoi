@@ -1,6 +1,12 @@
 /** Plex account authentication (plex.tv PIN flow) and server discovery. */
 
-import { filterItems, parseStrict, pinSchema, pinPollSchema, serverResourceSchema } from "./schemas.ts";
+import {
+	filterItems,
+	parseStrict,
+	pinSchema,
+	pinPollSchema,
+	serverResourceSchema,
+} from "./schemas.ts";
 
 export interface PlexPin {
 	id: string;
@@ -60,9 +66,15 @@ export async function createPin(
 	if (!res.ok) {
 		throw new Error(`Failed to create Plex PIN: ${res.status} ${res.statusText}`);
 	}
-	const parsed = parseStrict(pinSchema, await res.json(), "plex.tv /api/v2/pins (create)");
+	const parsed = parseStrict(
+		pinSchema,
+		await res.json(),
+		"plex.tv /api/v2/pins (create)",
+	);
 	if (!parsed) {
-		throw new Error(`Failed to create Plex PIN: unexpected response from plex.tv`);
+		throw new Error(
+			`Failed to create Plex PIN: unexpected response from plex.tv`,
+		);
 	}
 	return parsed;
 }
@@ -93,7 +105,12 @@ export interface WaitForPinOptions {
 export async function waitForPin(
 	pin: PlexPin,
 	plexTvUrl: string = DEFAULT_PLEX_TV_URL,
-	{ intervalMs = 2000, timeoutMs = 5 * 60_000, signal, onPoll }: WaitForPinOptions = {},
+	{
+		intervalMs = 2000,
+		timeoutMs = 5 * 60_000,
+		signal,
+		onPoll,
+	}: WaitForPinOptions = {},
 ): Promise<string> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
@@ -152,7 +169,9 @@ export async function discoverServers(
 		},
 	);
 	if (!res.ok) {
-		throw new Error(`Failed to discover Plex servers: ${res.status} ${res.statusText}`);
+		throw new Error(
+			`Failed to discover Plex servers: ${res.status} ${res.statusText}`,
+		);
 	}
 	const data = (await res.json()) as unknown;
 	const resources = Array.isArray(data)
@@ -167,16 +186,21 @@ export async function discoverServers(
  * Preserve Plex's order within each tier because it already reflects the
  * server's advertised preference.
  */
-export function connectionCandidates(resource: PlexServerResource): PlexConnection[] {
-	return (resource.connections ?? [])
-		.map((connection, index) => ({ connection, index }))
-		.filter(({ connection }) => connection.uri.length > 0)
-		.sort((a, b) => {
-			const priority = (connection: PlexConnection): number =>
-				connection.relay ? 2 : connection.local ? 0 : 1;
-			return priority(a.connection) - priority(b.connection) || a.index - b.index;
-		})
-		.map(({ connection }) => connection);
+export function connectionCandidates(
+	resource: PlexServerResource,
+): PlexConnection[] {
+	const candidates = (resource.connections ?? []).reduce<
+		{ connection: PlexConnection; index: number }[]
+	>((items, connection, index) => {
+		if (connection.uri.length > 0) items.push({ connection, index });
+		return items;
+	}, []);
+	candidates.sort((a, b) => {
+		const priority = (connection: PlexConnection): number =>
+			connection.relay ? 2 : connection.local ? 0 : 1;
+		return priority(a.connection) - priority(b.connection) || a.index - b.index;
+	});
+	return candidates.map(({ connection }) => connection);
 }
 
 /** First advertised candidate, used when every reachability probe fails. */

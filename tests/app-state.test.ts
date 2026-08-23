@@ -7,7 +7,9 @@ const musicSections = [
 ];
 
 test("shared app state keeps one active view and search query", () => {
-	const appState = createAppState({ loadMusicSections: async () => musicSections });
+	const appState = createAppState({
+		loadMusicSections: async () => musicSections,
+	});
 
 	appState.setActiveView("albums");
 	appState.setSearchQuery("carti");
@@ -16,6 +18,19 @@ test("shared app state keeps one active view and search query", () => {
 		activeView: "albums",
 		searchQuery: "carti",
 	});
+});
+
+test("app snapshots stay referentially stable between updates", () => {
+	const appState = createAppState({
+		loadMusicSections: async () => musicSections,
+	});
+
+	const first = appState.getSnapshot();
+	const second = appState.getSnapshot();
+
+	expect(second).toBe(first);
+	appState.setSearchQuery("carti");
+	expect(appState.getSnapshot()).not.toBe(first);
 });
 
 test("music sections are loaded once and shared across repeated reads", async () => {
@@ -63,7 +78,9 @@ test("changing servers invalidates the cached music sections", async () => {
 });
 
 test("changing servers advances the search invalidation generation", () => {
-	const appState = createAppState({ loadMusicSections: async () => musicSections });
+	const appState = createAppState({
+		loadMusicSections: async () => musicSections,
+	});
 
 	appState.setSearchQuery("carti");
 	const before = appState.getSnapshot().searchGeneration;

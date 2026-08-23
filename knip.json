@@ -1,0 +1,3 @@
+{
+	"entry": ["src/bun/index.ts", "src/mainview/index.tsx"]
+}
