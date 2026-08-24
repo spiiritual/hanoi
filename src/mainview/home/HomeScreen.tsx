@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useReducer, useRef, useSyncExternalStore } from "react";
 import { plex } from "../plex.ts";
 import type { ShellView } from "../app-state.ts";
 import { appState, homeState, playerState } from "../view-state.ts";
@@ -54,15 +54,9 @@ const shellViewCopy: Record<ShellView, { eyebrow: string; title: string; copy: s
 };
 
 type SearchResult = Awaited<ReturnType<typeof plex.search>>;
-type SearchResultItem = {
-  title: string;
-  meta: string;
-  onClick?: () => void;
-};
-
+type SearchResultItem = { title: string; meta: string; onClick?: () => void };
 function playHomeItem(item: PlexHubItem) {
-  if (item.type !== "track") return;
-  void playerState.playTrack(item);
+  if (item.type === "track") void playerState.playTrack(item);
 }
 
 function SearchResults({
@@ -88,32 +82,38 @@ function SearchResults({
   const groups: Array<{ label: string; items: SearchResultItem[] }> = [
     {
       label: "Songs",
-      items: result.tracks.slice(0, 6).map((item) => ({
-        title: item.title,
-        meta: item.grandparentTitle ?? item.parentTitle ?? "Song",
-        onClick: () => void playerState.playTrack(item),
-      })),
+      items: result.tracks
+        .slice(0, 6)
+        .map((item) => ({
+          title: item.title,
+          meta: item.grandparentTitle ?? item.parentTitle ?? "Song",
+          onClick: () => void playerState.playTrack(item),
+        })),
     },
     {
       label: "Albums",
-      items: result.albums.slice(0, 6).map((item) => ({
-        title: item.title,
-        meta: [item.parentTitle, item.year ? String(item.year) : "Album"]
-          .filter(Boolean)
-          .join(" · "),
-        onClick: () => onAlbum(item),
-      })),
+      items: result.albums
+        .slice(0, 6)
+        .map((item) => ({
+          title: item.title,
+          meta: [item.parentTitle, item.year ? String(item.year) : "Album"]
+            .filter(Boolean)
+            .join(" · "),
+          onClick: () => onAlbum(item),
+        })),
     },
     {
       label: "Artists",
-      items: result.artists.slice(0, 6).map((item) => ({
-        title: item.title,
-        meta: "Artist",
-        onClick: () => onArtist(item),
-      })),
+      items: result.artists
+        .slice(0, 6)
+        .map((item) => ({ title: item.title, meta: "Artist", onClick: () => onArtist(item) })),
     },
   ];
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+  const visibleGroups = groups.reduce<typeof groups>((visible, group) => {
+    if (group.items.length) visible.push(group);
+    return visible;
+  }, []);
   return (
     <div className="shell-search-results" id="shell-search-results">
       <p className="shell-search-status">
@@ -121,26 +121,24 @@ function SearchResults({
           ? `No results for “${query}”.`
           : `${total} result${total === 1 ? "" : "s"} for “${query}”`}
       </p>
-      {groups
-        .filter((group) => group.items.length > 0)
-        .map((group) => (
-          <section className="shell-search-group" key={group.label}>
-            <h3>{group.label}</h3>
-            <div className="shell-search-items">
-              {group.items.map((item) => (
-                <button
-                  className="shell-search-item"
-                  type="button"
-                  onClick={item.onClick}
-                  key={`${group.label}-${item.title}`}
-                >
-                  <span className="shell-search-item-title">{item.title}</span>
-                  <span className="shell-search-item-meta">{item.meta}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        ))}
+      {visibleGroups.map((group) => (
+        <section className="shell-search-group" key={group.label}>
+          <h3>{group.label}</h3>
+          <div className="shell-search-items">
+            {group.items.map((item) => (
+              <button
+                className="shell-search-item"
+                type="button"
+                onClick={item.onClick}
+                key={`${group.label}-${item.title}`}
+              >
+                <span className="shell-search-item-title">{item.title}</span>
+                <span className="shell-search-item-meta">{item.meta}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -151,214 +149,170 @@ export type HomeScreenProps = {
   onServers: (servers: Server[]) => void;
   onAddServer: () => void;
 };
+type AlbumNavigation = { ratingKey: string; returnView: ShellView };
+type ScreenState = {
+  category: HomeCategoryView | null;
+  searchResult: SearchResult | null;
+  searchStatus: string | null;
+  selectedAlbum: AlbumNavigation | null;
+  forwardAlbum: AlbumNavigation | null;
+  selectedArtist: AlbumNavigation | null;
+  forwardArtist: AlbumNavigation | null;
+  selectedPlaylist: AlbumNavigation | null;
+  forwardPlaylist: AlbumNavigation | null;
+};
+type ScreenAction = { type: "patch"; value: Partial<ScreenState> };
+const initialScreenState: ScreenState = {
+  category: null,
+  searchResult: null,
+  searchStatus: null,
+  selectedAlbum: null,
+  forwardAlbum: null,
+  selectedArtist: null,
+  forwardArtist: null,
+  selectedPlaylist: null,
+  forwardPlaylist: null,
+};
+function screenReducer(state: ScreenState, action: ScreenAction): ScreenState {
+  return action.type === "patch" ? { ...state, ...action.value } : state;
+}
 
-export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScreenProps) {
+type Controller = ReturnType<typeof useHomeController>;
+function useHomeController(servers: Server[], onServers: (servers: Server[]) => void) {
   const app = useSyncExternalStore(appState.subscribe, appState.getSnapshot, appState.getSnapshot);
   const home = useSyncExternalStore(
     homeState.subscribe,
     homeState.getSnapshot,
     homeState.getSnapshot,
   );
-  const [category, setCategory] = useState<HomeCategoryView | null>(null);
-  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
-  const [searchStatus, setSearchStatus] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(screenReducer, initialScreenState);
   const searchRun = useRef(0);
   const searchTimer = useRef<number | null>(null);
   const categoryRun = useRef(0);
-  type AlbumNavigation = {
-    ratingKey: string;
-    returnView: ShellView;
-  };
-  const [selectedAlbum, setSelectedAlbum] = useState<AlbumNavigation | null>(null);
-  const [forwardAlbum, setForwardAlbum] = useState<AlbumNavigation | null>(null);
-  const [selectedArtist, setSelectedArtist] = useState<AlbumNavigation | null>(null);
-  const [forwardArtist, setForwardArtist] = useState<AlbumNavigation | null>(null);
-  const [selectedPlaylist, setSelectedPlaylist] = useState<AlbumNavigation | null>(null);
-  const [forwardPlaylist, setForwardPlaylist] = useState<AlbumNavigation | null>(null);
-
+  const patch = (value: Partial<ScreenState>) => dispatch({ type: "patch", value });
+  const clearNavigation = () =>
+    patch({
+      selectedAlbum: null,
+      forwardAlbum: null,
+      selectedArtist: null,
+      forwardArtist: null,
+      selectedPlaylist: null,
+      forwardPlaylist: null,
+    });
   const issueSearch = (query: string, generation: number) => {
     const run = ++searchRun.current;
-    setSearchStatus(`Searching for “${query}”…`);
+    patch({ searchStatus: `Searching for “${query}”…` });
     void plex
       .search(query)
       .then((result) => {
-        const state = appState.getSnapshot();
+        const current = appState.getSnapshot();
         if (
           run === searchRun.current &&
-          state.searchGeneration === generation &&
-          state.activeView === "search" &&
-          state.searchQuery === query
-        ) {
-          setSearchResult(result);
-          setSearchStatus(null);
-        }
+          current.searchGeneration === generation &&
+          current.activeView === "search" &&
+          current.searchQuery === query
+        )
+          patch({ searchResult: result, searchStatus: null });
       })
       .catch((error: unknown) => {
-        const state = appState.getSnapshot();
+        const current = appState.getSnapshot();
         if (
           run === searchRun.current &&
-          state.searchGeneration === generation &&
-          state.activeView === "search" &&
-          state.searchQuery === query
+          current.searchGeneration === generation &&
+          current.activeView === "search" &&
+          current.searchQuery === query
         )
-          setSearchStatus(`Search failed: ${(error as Error).message}`);
+          patch({ searchStatus: `Search failed: ${(error as Error).message}` });
       });
   };
-
   useEffect(() => {
     homeState.setServer(app.selectedServer);
     categoryRun.current += 1;
-    setCategory(null);
-    setSelectedAlbum(null);
-    setForwardAlbum(null);
-    setSelectedArtist(null);
-    setForwardArtist(null);
-    setSelectedPlaylist(null);
-    setForwardPlaylist(null);
+    clearNavigation();
+    patch({ category: null, searchResult: null });
     searchRun.current += 1;
-    setSearchResult(null);
   }, [app.selectedServer]);
-
   useEffect(() => {
     if (app.selectedServer) {
       void appState.loadMusicSections().catch(() => undefined);
       void homeState.loadHomeHubs().catch(() => undefined);
     }
   }, [app.selectedServer]);
-
   useEffect(() => {
     const query = app.searchQuery;
     const generation = app.searchGeneration;
     searchRun.current += 1;
-    if (searchTimer.current !== null) {
-      window.clearTimeout(searchTimer.current);
-      searchTimer.current = null;
-    }
+    if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
     if (!query) {
-      setSearchResult(null);
-      setSearchStatus(null);
+      patch({ searchResult: null, searchStatus: null });
       return;
     }
-    setSearchStatus(`Searching for “${query}”…`);
+    patch({ searchStatus: `Searching for “${query}”…` });
     searchTimer.current = window.setTimeout(() => {
       searchTimer.current = null;
       issueSearch(query, generation);
     }, 260);
     return () => {
-      if (searchTimer.current !== null) {
-        window.clearTimeout(searchTimer.current);
-        searchTimer.current = null;
-      }
+      if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
     };
   }, [app.searchQuery, app.searchGeneration]);
-
+  const invalidateCategory = () => {
+    categoryRun.current += 1;
+  };
   const changeView = (view: ShellView) => {
-    setSelectedAlbum(null);
-    setForwardAlbum(null);
-    setSelectedArtist(null);
-    setForwardArtist(null);
-    setSelectedPlaylist(null);
-    setForwardPlaylist(null);
+    clearNavigation();
     if (view !== "home") {
-      categoryRun.current += 1;
-      setCategory(null);
+      invalidateCategory();
+      patch({ category: null });
     }
     if (view !== "search") appState.setSearchQuery("");
     appState.setActiveView(view);
   };
-
-  const openAlbum = (item: PlexAlbum | PlexHubItem) => {
+  const openDetail = (
+    kind: "Album" | "Artist" | "Playlist",
+    item: PlexAlbum | PlexArtist | PlexPlaylist | PlexHubItem,
+  ) => {
     if (!item.ratingKey) return;
-    const returnView = app.activeView;
-    setSelectedArtist(null);
-    setForwardArtist(null);
-    setSelectedPlaylist(null);
-    setForwardPlaylist(null);
-    setForwardAlbum(null);
-    setSelectedAlbum({ ratingKey: item.ratingKey, returnView });
-    if (returnView !== "albums") appState.setActiveView("albums");
+    const navigation = { ratingKey: item.ratingKey, returnView: app.activeView };
+    clearNavigation();
+    patch({ [`selected${kind}`]: navigation } as Partial<ScreenState>);
+    const view = kind === "Playlist" ? "playlists" : `${kind.toLowerCase()}s`;
+    if (app.activeView !== view) appState.setActiveView(view as ShellView);
   };
-
-  const openPlaylist = (playlist: PlexPlaylist | PlexHubItem) => {
-    if (!playlist.ratingKey) return;
-    const returnView = app.activeView;
-    setSelectedAlbum(null);
-    setForwardAlbum(null);
-    setSelectedArtist(null);
-    setForwardArtist(null);
-    setForwardPlaylist(null);
-    setSelectedPlaylist({ ratingKey: playlist.ratingKey, returnView });
-    if (returnView !== "playlists") appState.setActiveView("playlists");
-  };
-
-  const openArtist = (item: PlexArtist | PlexHubItem) => {
-    if (!item.ratingKey) return;
-    const returnView = app.activeView;
-    setSelectedAlbum(null);
-    setForwardAlbum(null);
-    setSelectedPlaylist(null);
-    setForwardPlaylist(null);
-    setForwardArtist(null);
-    setSelectedArtist({ ratingKey: item.ratingKey, returnView });
-    if (returnView !== "artists") appState.setActiveView("artists");
-  };
-
-  const closeAlbum = () => {
-    if (selectedAlbum) {
-      setForwardAlbum(selectedAlbum);
-      setSelectedAlbum(null);
-      if (appState.getSnapshot().activeView !== selectedAlbum.returnView) {
-        appState.setActiveView(selectedAlbum.returnView);
-      }
-      return;
-    }
-    if (selectedArtist) {
-      setForwardArtist(selectedArtist);
-      setSelectedArtist(null);
-      if (appState.getSnapshot().activeView !== selectedArtist.returnView) {
-        appState.setActiveView(selectedArtist.returnView);
-      }
-      return;
-    }
-    if (selectedPlaylist) {
-      setForwardPlaylist(selectedPlaylist);
-      setSelectedPlaylist(null);
-      if (appState.getSnapshot().activeView !== selectedPlaylist.returnView) {
-        appState.setActiveView(selectedPlaylist.returnView);
-      }
+  const openAlbum = (item: PlexAlbum | PlexHubItem) => openDetail("Album", item);
+  const openArtist = (item: PlexArtist | PlexHubItem) => openDetail("Artist", item);
+  const openPlaylist = (item: PlexPlaylist | PlexHubItem) => openDetail("Playlist", item);
+  const closeDetail = () => {
+    if (state.selectedAlbum) {
+      patch({ forwardAlbum: state.selectedAlbum, selectedAlbum: null });
+      if (appState.getSnapshot().activeView !== state.selectedAlbum.returnView)
+        appState.setActiveView(state.selectedAlbum.returnView);
+    } else if (state.selectedArtist) {
+      patch({ forwardArtist: state.selectedArtist, selectedArtist: null });
+      if (appState.getSnapshot().activeView !== state.selectedArtist.returnView)
+        appState.setActiveView(state.selectedArtist.returnView);
+    } else if (state.selectedPlaylist) {
+      patch({ forwardPlaylist: state.selectedPlaylist, selectedPlaylist: null });
+      if (appState.getSnapshot().activeView !== state.selectedPlaylist.returnView)
+        appState.setActiveView(state.selectedPlaylist.returnView);
     }
   };
-
-  const reopenAlbum = () => {
-    if (forwardAlbum) {
-      setSelectedAlbum(forwardAlbum);
-      setForwardAlbum(null);
-      if (appState.getSnapshot().activeView !== "albums") {
-        appState.setActiveView("albums");
-      }
-      return;
-    }
-    if (forwardArtist) {
-      setSelectedArtist(forwardArtist);
-      setForwardArtist(null);
-      if (appState.getSnapshot().activeView !== "artists") {
-        appState.setActiveView("artists");
-      }
-      return;
-    }
-    if (forwardPlaylist) {
-      setSelectedPlaylist(forwardPlaylist);
-      setForwardPlaylist(null);
-      if (appState.getSnapshot().activeView !== "playlists") {
-        appState.setActiveView("playlists");
-      }
+  const reopenDetail = () => {
+    if (state.forwardAlbum) {
+      patch({ selectedAlbum: state.forwardAlbum, forwardAlbum: null });
+      if (appState.getSnapshot().activeView !== "albums") appState.setActiveView("albums");
+    } else if (state.forwardArtist) {
+      patch({ selectedArtist: state.forwardArtist, forwardArtist: null });
+      if (appState.getSnapshot().activeView !== "artists") appState.setActiveView("artists");
+    } else if (state.forwardPlaylist) {
+      patch({ selectedPlaylist: state.forwardPlaylist, forwardPlaylist: null });
+      if (appState.getSnapshot().activeView !== "playlists") appState.setActiveView("playlists");
     }
   };
-
   const openCategory = async (hub: PlexHub) => {
     const run = ++categoryRun.current;
     const server = app.selectedServer;
-    setCategory({ hub, items: [], status: "loading", error: null });
+    patch({ category: { hub, items: [], status: "loading", error: null } });
     try {
       const rawItems = hub.hubIdentifier?.startsWith("music.recent.played.")
         ? (hub.Metadata ?? [])
@@ -367,23 +321,26 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
           : (hub.Metadata ?? []);
       const [filtered] = filterMusicHomeHubs([{ ...hub, Metadata: rawItems }]);
       if (run !== categoryRun.current || appState.getSnapshot().selectedServer !== server) return;
-      setCategory({
-        hub: filtered ?? { ...hub, Metadata: [] },
-        items: filtered?.Metadata ?? [],
-        status: "ready",
-        error: null,
+      patch({
+        category: {
+          hub: filtered ?? { ...hub, Metadata: [] },
+          items: filtered?.Metadata ?? [],
+          status: "ready",
+          error: null,
+        },
       });
     } catch (error) {
       if (run === categoryRun.current && appState.getSnapshot().selectedServer === server)
-        setCategory({
-          hub,
-          items: [],
-          status: "error",
-          error: error instanceof Error ? error.message : "Failed to load category",
+        patch({
+          category: {
+            hub,
+            items: [],
+            status: "error",
+            error: error instanceof Error ? error.message : "Failed to load category",
+          },
         });
     }
   };
-
   const selectServer = async (server: Server) => {
     if (!server.url || server.clientIdentifier === app.selectedServer) return;
     try {
@@ -399,8 +356,199 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
       console.error("Failed to select server:", error);
     }
   };
+  return {
+    app,
+    home,
+    state,
+    patch,
+    clearNavigation,
+    invalidateCategory,
+    issueSearch,
+    searchTimer,
+    changeView,
+    openAlbum,
+    openArtist,
+    openPlaylist,
+    closeDetail,
+    reopenDetail,
+    openCategory,
+    selectServer,
+  };
+}
 
+function HomeTopbar({
+  app,
+  state,
+  controller,
+}: {
+  app: Controller["app"];
+  state: ScreenState;
+  controller: Controller;
+}) {
+  const onSearch = (query: string) => {
+    controller.clearNavigation();
+    controller.invalidateCategory();
+    appState.setSearchQuery(query);
+    appState.setActiveView(query ? "search" : "home");
+    controller.patch({ category: null, searchResult: query ? state.searchResult : null });
+  };
+  return (
+    <header className="home-topbar">
+      <button
+        className="topbar-icon"
+        type="button"
+        aria-label="Back"
+        disabled={!state.selectedAlbum && !state.selectedArtist && !state.selectedPlaylist}
+        onClick={controller.closeDetail}
+      >
+        <Icon>
+          <path d="m15 18-6-6 6-6" />
+        </Icon>
+      </button>
+      <button
+        className="topbar-icon"
+        type="button"
+        aria-label="Forward"
+        disabled={!state.forwardAlbum && !state.forwardArtist && !state.forwardPlaylist}
+        onClick={controller.reopenDetail}
+      >
+        <Icon>
+          <path d="m9 18 6-6-6-6" />
+        </Icon>
+      </button>
+      <div className="topbar-search">
+        <Icon>
+          <circle cx="11" cy="11" r="6" />
+          <path d="m16 16 4 4" />
+        </Icon>
+        <input
+          id="shell-search-input"
+          aria-label="Search songs, albums, artists"
+          type="search"
+          placeholder="Search songs, albums, artists"
+          autoComplete="off"
+          spellCheck={false}
+          value={app.searchQuery}
+          onChange={(event) => onSearch(event.currentTarget.value.trim())}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && app.searchQuery) {
+              event.preventDefault();
+              if (controller.searchTimer.current !== null)
+                window.clearTimeout(controller.searchTimer.current);
+              controller.issueSearch(app.searchQuery, app.searchGeneration);
+            }
+          }}
+        />
+      </div>
+      <div className="topbar-spacer" />
+      <button className="topbar-icon" type="button" aria-label="Queue" disabled>
+        <Icon>
+          <path d="M4 6h16M4 12h16M4 18h10" />
+        </Icon>
+      </button>
+      <button className="topbar-icon" type="button" aria-label="Notifications" disabled>
+        <Icon>
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+        </Icon>
+      </button>
+    </header>
+  );
+}
+
+function HomeContent({
+  app,
+  home,
+  state,
+  controller,
+}: {
+  app: Controller["app"];
+  home: Controller["home"];
+  state: ScreenState;
+  controller: Controller;
+}) {
   const copy = shellViewCopy[app.activeView];
+  return (
+    <div className="home-content" id="home-content">
+      {state.selectedAlbum ? (
+        <AlbumDetail ratingKey={state.selectedAlbum.ratingKey} />
+      ) : state.selectedArtist ? (
+        <ArtistDetail ratingKey={state.selectedArtist.ratingKey} onAlbum={controller.openAlbum} />
+      ) : state.selectedPlaylist ? (
+        <PlaylistDetail ratingKey={state.selectedPlaylist.ratingKey} />
+      ) : app.activeView === "home" ? (
+        state.category ? (
+          <HomeCategory
+            view={state.category}
+            onAlbum={controller.openAlbum}
+            onArtist={controller.openArtist}
+            onPlaylist={controller.openPlaylist}
+            onPlay={playHomeItem}
+          />
+        ) : (
+          <HomeDashboard
+            state={home}
+            onRetry={() => void homeState.loadHomeHubs().catch(() => undefined)}
+            onCategory={(hub) => void controller.openCategory(hub)}
+            onAlbum={controller.openAlbum}
+            onArtist={controller.openArtist}
+            onPlaylist={controller.openPlaylist}
+            onPlay={playHomeItem}
+          />
+        )
+      ) : app.activeView === "albums" ? (
+        <AlbumLibrary
+          sections={app.musicSections}
+          sectionsStatus={app.musicSectionsStatus}
+          sectionsError={app.musicSectionsError}
+          onAlbum={controller.openAlbum}
+          onView={controller.changeView}
+        />
+      ) : app.activeView === "artists" ? (
+        <ArtistLibrary
+          sections={app.musicSections}
+          sectionsStatus={app.musicSectionsStatus}
+          sectionsError={app.musicSectionsError}
+          onArtist={controller.openArtist}
+          onView={controller.changeView}
+        />
+      ) : app.activeView === "songs" ? (
+        <SongsLibrary
+          sections={app.musicSections}
+          sectionsStatus={app.musicSectionsStatus}
+          sectionsError={app.musicSectionsError}
+          onView={controller.changeView}
+        />
+      ) : app.activeView === "search" ? (
+        <SearchResults
+          query={app.searchQuery}
+          result={state.searchResult}
+          status={state.searchStatus}
+          onAlbum={controller.openAlbum}
+          onArtist={controller.openArtist}
+        />
+      ) : (
+        <div className="home-shell-placeholder" id="shell-placeholder">
+          <span className="home-shell-eyebrow">{copy.eyebrow}</span>
+          <h2>{copy.title}</h2>
+          <p>{copy.copy}</p>
+          <p className="home-shell-status" id="shell-library-status" aria-live="polite">
+            {app.musicSectionsStatus === "loading"
+              ? "Loading your Plex music library…"
+              : app.musicSectionsStatus === "ready"
+                ? `${app.musicSections.length} music librar${app.musicSections.length === 1 ? "y" : "ies"} connected`
+                : app.musicSectionsStatus === "error"
+                  ? `Music library unavailable: ${app.musicSectionsError ?? ""}`
+                  : ""}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScreenProps) {
+  const controller = useHomeController(servers, onServers);
+  const { app, home, state } = controller;
   return (
     <div className="app-shell" id="home-shell">
       <Sidebar
@@ -408,160 +556,14 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
         servers={servers}
         selectedServer={app.selectedServer}
         activeView={app.activeView}
-        onView={changeView}
-        onSelectServer={selectServer}
+        onView={controller.changeView}
+        onSelectServer={controller.selectServer}
         onAddServer={onAddServer}
         onServers={onServers}
       />
       <main className="home-main">
-        <header className="home-topbar">
-          <button
-            className="topbar-icon"
-            type="button"
-            aria-label="Back"
-            disabled={!selectedAlbum && !selectedArtist && !selectedPlaylist}
-            onClick={closeAlbum}
-          >
-            <Icon>
-              <path d="m15 18-6-6 6-6" />
-            </Icon>
-          </button>
-          <button
-            className="topbar-icon"
-            type="button"
-            aria-label="Forward"
-            disabled={!forwardAlbum && !forwardArtist && !forwardPlaylist}
-            onClick={reopenAlbum}
-          >
-            <Icon>
-              <path d="m9 18 6-6-6-6" />
-            </Icon>
-          </button>
-          <label className="topbar-search" htmlFor="shell-search-input">
-            <Icon>
-              <circle cx="11" cy="11" r="6" />
-              <path d="m16 16 4 4" />
-            </Icon>
-            <input
-              id="shell-search-input"
-              type="search"
-              placeholder="Search songs, albums, artists"
-              autoComplete="off"
-              spellCheck={false}
-              value={app.searchQuery}
-              onChange={(event) => {
-                const query = event.currentTarget.value.trim();
-                setSelectedAlbum(null);
-                setForwardAlbum(null);
-                setSelectedArtist(null);
-                setForwardArtist(null);
-                setSelectedPlaylist(null);
-                setForwardPlaylist(null);
-                appState.setSearchQuery(query);
-                appState.setActiveView(query ? "search" : "home");
-                categoryRun.current += 1;
-                setCategory(null);
-                if (!query) setSearchResult(null);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && app.searchQuery) {
-                  event.preventDefault();
-                  if (searchTimer.current !== null) {
-                    window.clearTimeout(searchTimer.current);
-                    searchTimer.current = null;
-                  }
-                  issueSearch(app.searchQuery, app.searchGeneration);
-                }
-              }}
-            />
-          </label>
-          <div className="topbar-spacer" />
-          <button className="topbar-icon" type="button" aria-label="Queue" disabled>
-            <Icon>
-              <path d="M4 6h16M4 12h16M4 18h10" />
-            </Icon>
-          </button>
-          <button className="topbar-icon" type="button" aria-label="Notifications" disabled>
-            <Icon>
-              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-            </Icon>
-          </button>
-        </header>
-        <div className="home-content" id="home-content">
-          {selectedAlbum ? (
-            <AlbumDetail ratingKey={selectedAlbum.ratingKey} />
-          ) : selectedArtist ? (
-            <ArtistDetail ratingKey={selectedArtist.ratingKey} onAlbum={openAlbum} />
-          ) : selectedPlaylist ? (
-            <PlaylistDetail ratingKey={selectedPlaylist.ratingKey} />
-          ) : app.activeView === "home" ? (
-            category ? (
-              <HomeCategory
-                view={category}
-                onAlbum={openAlbum}
-                onArtist={openArtist}
-                onPlaylist={openPlaylist}
-                onPlay={playHomeItem}
-              />
-            ) : (
-              <HomeDashboard
-                state={home}
-                onRetry={() => void homeState.loadHomeHubs().catch(() => undefined)}
-                onCategory={(hub) => void openCategory(hub)}
-                onAlbum={openAlbum}
-                onArtist={openArtist}
-                onPlaylist={openPlaylist}
-                onPlay={playHomeItem}
-              />
-            )
-          ) : app.activeView === "albums" ? (
-            <AlbumLibrary
-              sections={app.musicSections}
-              sectionsStatus={app.musicSectionsStatus}
-              sectionsError={app.musicSectionsError}
-              onAlbum={openAlbum}
-              onView={changeView}
-            />
-          ) : app.activeView === "artists" ? (
-            <ArtistLibrary
-              sections={app.musicSections}
-              sectionsStatus={app.musicSectionsStatus}
-              sectionsError={app.musicSectionsError}
-              onArtist={openArtist}
-              onView={changeView}
-            />
-          ) : app.activeView === "songs" ? (
-            <SongsLibrary
-              sections={app.musicSections}
-              sectionsStatus={app.musicSectionsStatus}
-              sectionsError={app.musicSectionsError}
-              onView={changeView}
-            />
-          ) : app.activeView === "search" ? (
-            <SearchResults
-              query={app.searchQuery}
-              result={searchResult}
-              status={searchStatus}
-              onAlbum={openAlbum}
-              onArtist={openArtist}
-            />
-          ) : (
-            <div className="home-shell-placeholder" id="shell-placeholder">
-              <span className="home-shell-eyebrow">{copy.eyebrow}</span>
-              <h2>{copy.title}</h2>
-              <p>{copy.copy}</p>
-              <p className="home-shell-status" id="shell-library-status" aria-live="polite">
-                {app.musicSectionsStatus === "loading"
-                  ? "Loading your Plex music library…"
-                  : app.musicSectionsStatus === "ready"
-                    ? `${app.musicSections.length} music librar${app.musicSections.length === 1 ? "y" : "ies"} connected`
-                    : app.musicSectionsStatus === "error"
-                      ? `Music library unavailable: ${app.musicSectionsError ?? ""}`
-                      : ""}
-              </p>
-            </div>
-          )}
-        </div>
+        <HomeTopbar app={app} state={state} controller={controller} />
+        <HomeContent app={app} home={home} state={state} controller={controller} />
       </main>
       <PlayerBar />
     </div>

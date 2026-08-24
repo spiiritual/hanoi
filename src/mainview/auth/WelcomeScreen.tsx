@@ -15,16 +15,13 @@ export function WelcomeScreen({ onSignIn }: { onSignIn: () => void }) {
         <span>Sign in with Plex</span>
       </button>
       <AuthSpacer height={16} />
-      <a
+      <button
         className="link-muted"
-        href="https://www.plex.tv/sign-up/"
-        onClick={(event) => {
-          event.preventDefault();
-          void plex.openExternal("https://www.plex.tv/sign-up/");
-        }}
+        type="button"
+        onClick={() => void plex.openExternal("https://www.plex.tv/sign-up/")}
       >
         Don't have an account?&nbsp; Create one
-      </a>
+      </button>
       <AuthSpacer height={64} />
     </AuthLayout>
   );

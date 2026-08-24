@@ -13,7 +13,7 @@ export function OAuthScreen({
   active?: boolean;
 }) {
   const [code, setCode] = useState("A1B2C3");
-  const [url, setUrl] = useState<string | null>(null);
+  const urlRef = useRef<string | null>(null);
   const [status, setStatus] = useState("Waiting for authorization…");
   const runRef = useRef(0);
   const pollRef = useRef<number | null>(null);
@@ -26,6 +26,7 @@ export function OAuthScreen({
     if (!active) return;
     const run = ++runRef.current;
     stop();
+    urlRef.current = null;
     let cancelled = false;
     const poll = async (): Promise<void> => {
       if (cancelled || run !== runRef.current) return;
@@ -56,7 +57,7 @@ export function OAuthScreen({
       .then(({ authUrl, pinCode }) => {
         if (cancelled || run !== runRef.current) return;
         setCode(pinCode);
-        setUrl(authUrl);
+        urlRef.current = authUrl;
         void poll();
       })
       .catch((error: unknown) => {
@@ -88,7 +89,7 @@ export function OAuthScreen({
             className="btn-open"
             type="button"
             onClick={() => {
-              if (url) void plex.openExternal(url);
+              if (urlRef.current) void plex.openExternal(urlRef.current);
             }}
           >
             <span className="open-icon">↗</span>Open in Browser
@@ -97,7 +98,7 @@ export function OAuthScreen({
             className="btn-copy"
             type="button"
             onClick={() => {
-              if (url) void plex.clipboardWriteText(url);
+              if (urlRef.current) void plex.clipboardWriteText(urlRef.current);
             }}
           >
             Copy link

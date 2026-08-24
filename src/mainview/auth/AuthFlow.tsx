@@ -70,10 +70,8 @@ export function AuthFlow({
     };
   }, []);
 
-  useEffect(() => {
-    if (initialStage !== "welcome") return;
-    let cancelled = false;
-    void (async () => {
+  const checkStartup = useCallback(
+    async (isCancelled: () => boolean): Promise<void> => {
       const finishStartup = async (): Promise<boolean> => {
         const remaining = AUTH_STARTUP_MIN_MS - (Date.now() - startupStartedAt);
         if (remaining > 0) {
@@ -81,7 +79,7 @@ export function AuthFlow({
             window.setTimeout(resolve, remaining);
           });
         }
-        return !cancelled && stageRef.current === "welcome";
+        return !isCancelled() && stageRef.current === "welcome";
       };
 
       try {
@@ -111,16 +109,22 @@ export function AuthFlow({
           setStartupChecking(false);
         }
       } catch {
-        if (await finishStartup()) {
-          setStartupChecking(false);
-          transitionTo("welcome");
-        }
+        if (!(await finishStartup())) return;
+        setStartupChecking(false);
+        transitionTo("welcome");
       }
-    })();
+    },
+    [onComplete, startupStartedAt, transitionTo],
+  );
+
+  useEffect(() => {
+    if (initialStage !== "welcome") return;
+    let cancelled = false;
+    void checkStartup(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [initialStage, onComplete, startupStartedAt, transitionTo]);
+  }, [checkStartup, initialStage]);
 
   const startAuth = useCallback(() => {
     transitionTo("oauth");
@@ -149,7 +153,7 @@ export function AuthFlow({
       const message = error instanceof Error ? error.message : String(error);
       setServerError(`Couldn't load your Plex servers: ${message}`);
     } finally {
-      if (run === serverRun.current) setServerLoading(false);
+      setServerLoading((current) => (run === serverRun.current ? false : current));
     }
   }, []);
 

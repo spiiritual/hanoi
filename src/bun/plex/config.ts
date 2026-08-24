@@ -33,14 +33,12 @@ const serverSchema = z.object({
 });
 
 /** Persisted account profile — the app-domain shape written by getPlexAccount. */
-const accountSchema = z
-  .object({
-    username: z.string().min(1),
-    email: z.string().min(1),
-    thumb: z.string().optional(),
-    verified: z.boolean(),
-  })
-  .passthrough();
+const accountSchema = z.looseObject({
+  username: z.string().min(1),
+  email: z.string().min(1),
+  thumb: z.string().optional(),
+  verified: z.boolean(),
+});
 
 /** Runtime shape of the persisted config; `loadConfig` validates against it. */
 export const plexConfigSchema = z.object({

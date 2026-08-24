@@ -1,6 +1,6 @@
 import type { PlexSection } from "../bun/plex/types.ts";
 
-export const shellViews = ["home", "albums", "artists", "songs", "playlists", "search"] as const;
+const shellViews = ["home", "albums", "artists", "songs", "playlists", "search"] as const;
 export type ShellView = (typeof shellViews)[number];
 
 export type MusicSectionsStatus = "idle" | "loading" | "ready" | "error";

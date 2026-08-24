@@ -18,7 +18,7 @@ export interface PlexPin {
 }
 
 export interface PlexConnection {
-  /** Connection URI; drives `serverUrl` and the dropdown host display. */
+  /** Connection URI used for the dropdown host display. */
   uri: string;
   /** Picks the best connection (local preferred). */
   local: boolean;
@@ -186,9 +186,4 @@ export function connectionCandidates(resource: PlexServerResource): PlexConnecti
     return priority(a.connection) - priority(b.connection) || a.index - b.index;
   });
   return candidates.map(({ connection }) => connection);
-}
-
-/** First advertised candidate, used when every reachability probe fails. */
-export function serverUrl(resource: PlexServerResource): string {
-  return connectionCandidates(resource)[0]?.uri ?? "";
 }

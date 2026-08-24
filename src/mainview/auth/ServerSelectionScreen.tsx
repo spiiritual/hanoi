@@ -40,13 +40,13 @@ export function ServerSelectionScreen({
           servers.map((server) => {
             const usable = Boolean(server.url);
             return (
-              <div
+              <button
                 className={`server${usable && server.clientIdentifier === selected ? " sel" : ""}${usable ? "" : " is-unavailable"}`}
                 title={usable ? undefined : "No server connection is available"}
+                type="button"
                 key={server.clientIdentifier}
-                onClick={() => {
-                  if (usable && !starting) onSelect(server.clientIdentifier);
-                }}
+                disabled={!usable || starting}
+                onClick={() => onSelect(server.clientIdentifier)}
               >
                 <div className="server-icon">
                   <ServerIcon />
@@ -64,7 +64,7 @@ export function ServerSelectionScreen({
                     <path d="m9 12 2 2 4-4" />
                   </Icon>
                 </div>
-              </div>
+              </button>
             );
           })
         )}
@@ -73,15 +73,9 @@ export function ServerSelectionScreen({
       {error && <p className="server-error">{error}</p>}
       <p className="hint">
         Can't find your server?&nbsp;{" "}
-        <a
-          href="#"
-          onClick={(event) => {
-            event.preventDefault();
-            if (!starting) onAgain();
-          }}
-        >
+        <button className="link-muted" type="button" disabled={starting} onClick={onAgain}>
           Sign in again
-        </a>
+        </button>
       </p>
       <AuthSpacer height={28} />
       <button

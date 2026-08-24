@@ -112,7 +112,7 @@ test("artwork RPC mapping exposes JSON-safe bytes, content type, and cache statu
     contentType: "image/jpeg",
     cacheStatus: "hit",
   });
-  expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+  expect(structuredClone(result)).toEqual(result);
   expect(toArtworkRpcResult(null, "miss")).toBeNull();
 });
 

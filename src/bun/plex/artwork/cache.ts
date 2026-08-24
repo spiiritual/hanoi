@@ -615,11 +615,13 @@ export class ArtworkCache {
     } catch {
       return;
     }
-    await Promise.all(
-      files
-        .filter((file) => file.endsWith(".tmp") || (file.endsWith(".bin") && !referenced.has(file)))
-        .map((file) => removeIfPresent(join(this.objectsDirectory, file))),
-    );
+    const removals: Promise<void>[] = [];
+    for (const file of files) {
+      if (file.endsWith(".tmp") || (file.endsWith(".bin") && !referenced.has(file))) {
+        removals.push(removeIfPresent(join(this.objectsDirectory, file)));
+      }
+    }
+    await Promise.all(removals);
   }
 
   private async writeObjectAtomically(objectName: string, data: Uint8Array): Promise<void> {
