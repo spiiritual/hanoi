@@ -28,6 +28,7 @@ export default {
       "src/mainview/home/HomeContent.css": "views/mainview/home/HomeContent.css",
       "src/mainview/album/AlbumScreen.css": "views/mainview/album/AlbumScreen.css",
       "src/mainview/artist/ArtistScreen.css": "views/mainview/artist/ArtistScreen.css",
+      "src/mainview/songs/SongsScreen.css": "views/mainview/songs/SongsScreen.css",
       "src/mainview/playlist/PlaylistScreen.css": "views/mainview/playlist/PlaylistScreen.css",
       "src/mainview/sidebar/Sidebar.css": "views/mainview/sidebar/Sidebar.css",
       "src/mainview/player/PlayerBar.css": "views/mainview/player/PlayerBar.css",

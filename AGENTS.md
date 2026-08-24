@@ -8,4 +8,4 @@ After making any changes, run "npm run lint:agent", then "npx oxfmt".
 
 This project uses react-doctor to find issues in the React code. To run react-doctor, use the command "npx react-doctor@latest --json --yes --scope changed" from the project root. Run react-doctor everytime you change React code.
 
-When running the app for testing purposes, use "hutch run dev" to start the app in development mode. Do not build the whole app for testing.
+When running the app for testing purposes, use "hutch run dev" to start the app in development mode. Do not build the whole app for testing. Use computer use, whether that's through cua-driver, Codex, or whatever solution you have access to that is capable of driving the test build, to test your work and verify that it works as intended before claiming completion.

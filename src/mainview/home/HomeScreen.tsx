@@ -7,6 +7,7 @@ import { HomeCategory, HomeDashboard, type HomeCategoryView } from "./HomeConten
 import { AlbumDetail, AlbumLibrary } from "../album/AlbumScreen.tsx";
 import { ArtistDetail, ArtistLibrary } from "../artist/ArtistScreen.tsx";
 import { PlaylistDetail } from "../playlist/PlaylistScreen.tsx";
+import { SongsLibrary } from "../songs/SongsScreen.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { PlayerBar } from "../player/PlayerBar.tsx";
 import { Sidebar } from "../sidebar/Sidebar.tsx";
@@ -527,6 +528,13 @@ export function HomeScreen({ account, servers, onServers, onAddServer }: HomeScr
               sectionsStatus={app.musicSectionsStatus}
               sectionsError={app.musicSectionsError}
               onArtist={openArtist}
+              onView={changeView}
+            />
+          ) : app.activeView === "songs" ? (
+            <SongsLibrary
+              sections={app.musicSections}
+              sectionsStatus={app.musicSectionsStatus}
+              sectionsError={app.musicSectionsError}
               onView={changeView}
             />
           ) : app.activeView === "search" ? (
