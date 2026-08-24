@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { plex } from "../plex.ts";
 import type { ShellView } from "../app-state.ts";
 import { Icon } from "../components/Icon.tsx";
@@ -32,20 +32,28 @@ export function Sidebar({
   const [menuLoading, setMenuLoading] = useState(false);
   const [menuError, setMenuError] = useState<string | null>(null);
   const selected = servers.find((server) => server.clientIdentifier === selectedServer);
-  const loadServers = async () => {
-    setServerOpen(true);
-    setMenuLoading(true);
-    setMenuError(null);
+  const refreshServers = useCallback(async () => {
     try {
       const found = await plex.getServers();
       onServers(found);
       setServerStatus(found.find((server) => server.clientIdentifier === selectedServer)?.online);
     } catch (error) {
       setMenuError(`Couldn't load servers: ${(error as Error).message}`);
+    }
+  }, [onServers, selectedServer]);
+  const loadServers = useCallback(async () => {
+    setServerOpen(true);
+    setMenuLoading(true);
+    setMenuError(null);
+    try {
+      await refreshServers();
     } finally {
       setMenuLoading(false);
     }
-  };
+  }, [refreshServers]);
+  useEffect(() => {
+    void refreshServers();
+  }, [refreshServers]);
   useEffect(() => {
     setServerStatus(selected?.online);
   }, [selected]);

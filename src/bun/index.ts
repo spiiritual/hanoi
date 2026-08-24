@@ -45,6 +45,24 @@ let nextAuthAttemptId = 0;
 let authAttempt: AuthAttempt | null = null;
 let authError: string | null = null;
 
+const SERVER_DISCOVERY_CACHE_TTL_MS = 10_000;
+
+interface ServerDiscoveryCache {
+  token: string;
+  clientIdentifier: string;
+  expiresAt: number;
+  servers: PlexServerInfo[];
+}
+
+interface PendingServerDiscovery {
+  token: string;
+  clientIdentifier: string;
+  promise: Promise<PlexServerInfo[]>;
+}
+
+let serverDiscoveryCache: ServerDiscoveryCache | null = null;
+let pendingServerDiscovery: PendingServerDiscovery | null = null;
+
 function isCurrentAuthAttempt(attempt: AuthAttempt): boolean {
   return authAttempt?.id === attempt.id && !attempt.abort.signal.aborted;
 }
@@ -56,6 +74,41 @@ function errorMessage(error: unknown): string {
 function requireClient(): PlexClient {
   if (!client) throw new Error("Not connected to a Plex server");
   return client;
+}
+
+async function discoverServersCached(
+  token: string,
+  clientIdentifier: string,
+): Promise<PlexServerInfo[]> {
+  const cached = serverDiscoveryCache;
+  if (
+    cached &&
+    cached.token === token &&
+    cached.clientIdentifier === clientIdentifier &&
+    cached.expiresAt > Date.now()
+  ) {
+    return cached.servers;
+  }
+
+  const pending = pendingServerDiscovery;
+  if (pending && pending.token === token && pending.clientIdentifier === clientIdentifier) {
+    return pending.promise;
+  }
+
+  const promise = discoverPlexServers(token, clientIdentifier);
+  pendingServerDiscovery = { token, clientIdentifier, promise };
+  try {
+    const servers = await promise;
+    serverDiscoveryCache = {
+      token,
+      clientIdentifier,
+      expiresAt: Date.now() + SERVER_DISCOVERY_CACHE_TTL_MS,
+      servers,
+    };
+    return servers;
+  } finally {
+    if (pendingServerDiscovery?.promise === promise) pendingServerDiscovery = null;
+  }
 }
 
 function artworkNamespaceForConfig(cfg: PlexConfig) {
@@ -218,8 +271,9 @@ async function hydrateAccount(token: string): Promise<PlexAccount> {
 async function selectServer(params: { clientIdentifier: string }): Promise<void> {
   const cfg = config;
   if (!cfg?.token) throw new Error("Not authenticated");
-  // Re-discover fresh each selection (the list is never persisted).
-  const servers = await discoverPlexServers(cfg.token, cfg.clientIdentifier);
+  // Reuse the recent server list from the picker instead of probing every
+  // connection a second time during selection.
+  const servers = await discoverServersCached(cfg.token, cfg.clientIdentifier);
   if (config?.token !== cfg.token || config?.clientIdentifier !== cfg.clientIdentifier) {
     throw new Error("Authentication state changed while loading servers");
   }
@@ -254,7 +308,7 @@ async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary
   };
 
   try {
-    const discovered = await discoverPlexServers(cfg.token, cfg.clientIdentifier);
+    const discovered = await discoverServersCached(cfg.token, cfg.clientIdentifier);
     const selected = findPersistedServer(cfg.server, discovered);
     if (!selected) return fallback;
 
@@ -396,7 +450,7 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
       async getServers() {
         const cfg = config;
         if (!cfg?.token) return [];
-        const servers = await discoverPlexServers(cfg.token, cfg.clientIdentifier);
+        const servers = await discoverServersCached(cfg.token, cfg.clientIdentifier);
         const selected = cfg.server ? findPersistedServer(cfg.server, servers) : undefined;
         if (selected) syncActiveServer(cfg, selected);
         return servers.map((server) => ({

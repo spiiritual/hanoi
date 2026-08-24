@@ -82,25 +82,21 @@ function SearchResults({
   const groups: Array<{ label: string; items: SearchResultItem[] }> = [
     {
       label: "Songs",
-      items: result.tracks
-        .slice(0, 6)
-        .map((item) => ({
-          title: item.title,
-          meta: item.grandparentTitle ?? item.parentTitle ?? "Song",
-          onClick: () => void playerState.playTrack(item),
-        })),
+      items: result.tracks.slice(0, 6).map((item) => ({
+        title: item.title,
+        meta: item.grandparentTitle ?? item.parentTitle ?? "Song",
+        onClick: () => void playerState.playTrack(item),
+      })),
     },
     {
       label: "Albums",
-      items: result.albums
-        .slice(0, 6)
-        .map((item) => ({
-          title: item.title,
-          meta: [item.parentTitle, item.year ? String(item.year) : "Album"]
-            .filter(Boolean)
-            .join(" · "),
-          onClick: () => onAlbum(item),
-        })),
+      items: result.albums.slice(0, 6).map((item) => ({
+        title: item.title,
+        meta: [item.parentTitle, item.year ? String(item.year) : "Album"]
+          .filter(Boolean)
+          .join(" · "),
+        onClick: () => onAlbum(item),
+      })),
     },
     {
       label: "Artists",

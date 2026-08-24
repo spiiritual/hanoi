@@ -95,6 +95,17 @@ test("unreachable connection selection returns no online candidate", async () =>
   expect(selected).toBeUndefined();
 });
 
+test("reachable connection selection does not wait for slower candidates", async () => {
+  const slowProbe = Promise.withResolvers<boolean>();
+  const selected = await selectReachableConnection(resource, "server-token", async (url) => {
+    if (url === "https://lan.example") return slowProbe.promise;
+    return url === "https://tailscale.example";
+  });
+
+  expect(selected?.uri).toBe("https://tailscale.example");
+  slowProbe.resolve(false);
+});
+
 test("reachable discovery detects a stale persisted server URL", () => {
   const selected: PlexServerInfo = {
     name: "SekiNAS",

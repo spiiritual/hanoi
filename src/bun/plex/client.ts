@@ -108,23 +108,27 @@ export function replaceRecentlyPlayedPreview(
   });
 }
 
-/** Probe all candidates concurrently and return the first reachable one by priority. */
+/** Probe all candidates concurrently and return the first reachable one. */
 export async function selectReachableConnection(
   resource: PlexServerResource,
   token: string,
   probe: ServerConnectionProbe = checkPlexServerStatus,
 ): Promise<PlexConnection | undefined> {
   const candidates = connectionCandidates(resource);
-  const reachable = await Promise.all(
-    candidates.map(async (connection) => {
-      try {
-        return await probe(connection.uri, token);
-      } catch {
-        return false;
-      }
-    }),
-  );
-  return candidates.find((_, index) => reachable[index]);
+  const probes = candidates.map(async (connection) => {
+    try {
+      if (await probe(connection.uri, token)) return connection;
+    } catch {
+      // A failed candidate is expected while trying the remaining connections.
+    }
+    throw new Error(`Plex connection is unreachable: ${connection.uri}`);
+  });
+
+  try {
+    return await Promise.any(probes);
+  } catch {
+    return undefined;
+  }
 }
 
 export class PlexClient {
