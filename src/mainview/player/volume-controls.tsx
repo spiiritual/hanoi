@@ -1,12 +1,13 @@
 import { useSyncExternalStore } from "react";
-import { Icon } from "../components/Icon.tsx";
+
+import { Icon } from "../components/icon.tsx";
 import { playerState } from "../view-state.ts";
 
-export function VolumeControls() {
+export const VolumeControls = () => {
   const player = useSyncExternalStore(
     playerState.subscribe,
     playerState.getSnapshot,
-    playerState.getSnapshot,
+    playerState.getSnapshot
   );
 
   return (
@@ -23,9 +24,11 @@ export function VolumeControls() {
           step="0.01"
           value={player.volume}
           aria-label="Volume"
-          onChange={(event) => playerState.setVolume(Number(event.currentTarget.value))}
+          onChange={(event) => {
+            playerState.setVolume(Number(event.currentTarget.value));
+          }}
         />
       </div>
     </div>
   );
-}
+};

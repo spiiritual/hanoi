@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { serverStatusClass, serverStatusLabel } from "../src/mainview/sidebar/utils.ts";
+
+import {
+  serverStatusClass,
+  serverStatusLabel,
+} from "../src/mainview/sidebar/utils.ts";
 
 test("offline servers keep an offline status in the selector", () => {
   expect(serverStatusLabel(false)).toBe("○ Offline");
@@ -9,6 +13,6 @@ test("offline servers keep an offline status in the selector", () => {
 });
 
 test("unknown server status stays visibly pending", () => {
-  expect(serverStatusLabel(undefined)).toBe("Checking…");
-  expect(serverStatusClass(undefined)).toBe("is-checking");
+  expect(serverStatusLabel()).toBe("Checking…");
+  expect(serverStatusClass()).toBe("is-checking");
 });

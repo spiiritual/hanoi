@@ -1,4 +1,7 @@
-import type { z } from "zod";
+import { z } from "zod";
+
+import { connectionCandidates, discoverServers } from "./auth.ts";
+import type { PlexConnection, PlexServerResource } from "./auth.ts";
 import {
   container,
   filterItems,
@@ -11,22 +14,18 @@ import {
   plexAccountSchema,
   sectionSchema,
   trackSchema,
-  type PlexAlbum,
-  type PlexArtist,
-  type PlexHub,
-  type PlexHubItem,
-  type PlexMetadata,
-  type PlexPlaylist,
-  type PlexSection,
-  type PlexTrack,
+} from "./schemas.ts";
+import type {
+  PlexAlbum,
+  PlexArtist,
+  PlexHub,
+  PlexHubItem,
+  PlexMetadata,
+  PlexPlaylist,
+  PlexSection,
+  PlexTrack,
 } from "./schemas.ts";
 import type { PlexServerInfo, PlexAccount } from "./types.ts";
-import {
-  connectionCandidates,
-  discoverServers,
-  type PlexConnection,
-  type PlexServerResource,
-} from "./auth.ts";
 
 export interface PlexClientOptions {
   /** Base URL of the Plex Media Server, e.g. http://192.168.1.10:32400 */
@@ -50,74 +49,139 @@ export interface BrowseOptions {
 const DEFAULT_STATUS_TIMEOUT_MS = 3000;
 const RECENTLY_PLAYED_HUB_PREFIX = "music.recent.played.";
 
-export type ServerConnectionProbe = (url: string, token: string) => Promise<boolean>;
+interface RawMetadataItem {
+  type?: string;
+}
 
-function isAudioHomeItem(item: PlexHubItem): boolean {
-  return (
+type MetadataItem =
+  | PlexAlbum
+  | PlexArtist
+  | PlexTrack
+  | PlexPlaylist
+  | RawMetadataItem;
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ])
+);
+
+export type ServerConnectionProbe = (
+  url: string,
+  token: string
+) => Promise<boolean>;
+
+const isAudioHomeItem = (item: PlexHubItem): boolean => {
+  if (
     item.type === "artist" ||
     item.type === "album" ||
-    item.type === "track" ||
-    (item.type === "playlist" && item.playlistType !== "video")
-  );
-}
+    item.type === "track"
+  ) {
+    return true;
+  }
+  return item.type === "playlist" && item.playlistType !== "video";
+};
 
-function hasAudioHomeItems(hub: PlexHub): boolean {
-  return (hub.Metadata ?? []).some(isAudioHomeItem);
-}
+const hasAudioHomeItems = (hub: PlexHub): boolean =>
+  (hub.Metadata ?? []).some(isAudioHomeItem);
 
-function hasAudioPlaylist(hub: PlexHub): boolean {
-  return (hub.Metadata ?? []).some(
-    (item) => item.type === "playlist" && item.playlistType !== "video",
+const hasAudioPlaylist = (hub: PlexHub): boolean =>
+  (hub.Metadata ?? []).some(
+    (item) => item.type === "playlist" && item.playlistType !== "video"
   );
-}
 
 /**
  * Plex exposes general home hubs and music-library hubs through separate
  * endpoints. Use the music-library order as the main home surface, then keep
  * useful global audio playlist rows that are not part of that response.
  */
-export function composeHomeHubs(sectionHubs: PlexHub[], globalHubs: PlexHub[]): PlexHub[] {
+export const composeHomeHubs = (
+  sectionHubs: PlexHub[],
+  globalHubs: PlexHub[]
+): PlexHub[] => {
   const musicRows = sectionHubs.filter(hasAudioHomeItems);
-  if (musicRows.length === 0) return globalHubs.filter(hasAudioHomeItems);
+  if (musicRows.length === 0) {
+    return globalHubs.filter(hasAudioHomeItems);
+  }
 
   const sectionIdentifiers = new Set(
     musicRows
       .map((hub) => hub.hubIdentifier)
-      .filter((identifier): identifier is string => Boolean(identifier)),
+      .filter((identifier): identifier is string => Boolean(identifier))
   );
   const globalPlaylistRows = globalHubs.filter(
     (hub) =>
-      hasAudioPlaylist(hub) && (!hub.hubIdentifier || !sectionIdentifiers.has(hub.hubIdentifier)),
+      hasAudioPlaylist(hub) &&
+      (hub.hubIdentifier === undefined ||
+        hub.hubIdentifier.length === 0 ||
+        !sectionIdentifiers.has(hub.hubIdentifier))
   );
   return [...musicRows, ...globalPlaylistRows];
-}
+};
 
 /** Replace Plex's artist-only recent-play hub with the mixed activity preview. */
-export function replaceRecentlyPlayedPreview(
+export const replaceRecentlyPlayedPreview = (
   hubs: PlexHub[],
-  recentlyPlayed: PlexHubItem[],
-): PlexHub[] {
-  if (recentlyPlayed.length === 0) return hubs;
+  recentlyPlayed: PlexHubItem[]
+): PlexHub[] => {
+  if (recentlyPlayed.length === 0) {
+    return hubs;
+  }
   let replaced = false;
   return hubs.map((hub) => {
-    if (replaced || !hub.hubIdentifier?.startsWith(RECENTLY_PLAYED_HUB_PREFIX)) {
+    if (
+      replaced ||
+      hub.hubIdentifier === undefined ||
+      hub.hubIdentifier.length === 0 ||
+      !hub.hubIdentifier.startsWith(RECENTLY_PLAYED_HUB_PREFIX)
+    ) {
       return hub;
     }
     replaced = true;
     return { ...hub, Metadata: recentlyPlayed };
   });
-}
+};
+
+export const checkPlexServerStatus = async (
+  url: string,
+  token: string
+): Promise<boolean> => {
+  try {
+    const res = await fetch(`${url.replace(/\/+$/u, "")}/identity`, {
+      headers: { Accept: "application/json", "X-Plex-Token": token },
+      signal: AbortSignal.timeout(DEFAULT_STATUS_TIMEOUT_MS),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
 
 /** Probe all candidates concurrently and return the first reachable one. */
-export async function selectReachableConnection(
+export const selectReachableConnection = async (
   resource: PlexServerResource,
   token: string,
-  probe: ServerConnectionProbe = checkPlexServerStatus,
-): Promise<PlexConnection | undefined> {
+  probe: ServerConnectionProbe = checkPlexServerStatus
+): Promise<PlexConnection | undefined> => {
   const candidates = connectionCandidates(resource);
   const probes = candidates.map(async (connection) => {
     try {
-      if (await probe(connection.uri, token)) return connection;
+      if (await probe(connection.uri, token)) {
+        return connection;
+      }
     } catch {
       // A failed candidate is expected while trying the remaining connections.
     }
@@ -129,7 +193,62 @@ export async function selectReachableConnection(
   } catch {
     return undefined;
   }
-}
+};
+
+/** The account's Plex.tv profile. Token-only — usable before a server is selected. */
+export const getPlexAccount = async (token: string): Promise<PlexAccount> => {
+  const res = await fetch("https://plex.tv/api/v2/user", {
+    headers: {
+      Accept: "application/json",
+      "X-Plex-Token": token,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch Plex account: ${res.status} ${res.statusText}`
+    );
+  }
+  // SAFETY: The parsed value is intentionally kept unknown until plexAccountSchema validates it.
+  // SAFETY: The response is validated by plexAccountSchema before use.
+  const user = (await res.json()) as unknown;
+  const parsed = parseStrict(plexAccountSchema, user, "plex.tv /api/v2/user");
+  if (!parsed) {
+    throw new Error(
+      "Failed to fetch Plex account: unexpected response from plex.tv"
+    );
+  }
+  return {
+    email: parsed.email,
+    thumb: parsed.thumb,
+    username: parsed.username,
+    verified: parsed.confirmed === true,
+  };
+};
+
+/** Servers owned by the account, each with its best connection URI. */
+export const discoverPlexServers = async (
+  token: string,
+  clientIdentifier: string
+): Promise<PlexServerInfo[]> => {
+  const resources = await discoverServers(token, clientIdentifier);
+  return await Promise.all(
+    resources.map(async (resource) => {
+      const serverToken = resource.accessToken ?? token;
+      const candidates = connectionCandidates(resource);
+      const selected = await selectReachableConnection(resource, serverToken);
+      const [fallback] = candidates;
+      const connection = selected ?? fallback;
+      return {
+        clientIdentifier: resource.clientIdentifier,
+        local: connection?.local ?? false,
+        name: resource.name,
+        online: selected !== undefined,
+        token: serverToken,
+        url: connection?.uri ?? "",
+      };
+    })
+  );
+};
 
 export class PlexClient {
   private readonly _baseUrl: string;
@@ -137,12 +256,12 @@ export class PlexClient {
   private readonly _clientIdentifier: string;
 
   constructor({ url, token, clientIdentifier }: PlexClientOptions) {
-    this._baseUrl = url.replace(/\/+$/, "");
+    this._baseUrl = url.replace(/\/+$/u, "");
     this._token = token;
     this._clientIdentifier = clientIdentifier ?? "";
   }
 
-  private async request<T>(path: string): Promise<T> {
+  private async request(path: string): Promise<JsonValue> {
     const res = await fetch(`${this._baseUrl}${path}`, {
       headers: {
         Accept: "application/json",
@@ -150,15 +269,21 @@ export class PlexClient {
       },
     });
     if (!res.ok) {
-      throw new Error(`Plex request failed: ${res.status} ${res.statusText} for ${path}`);
+      throw new Error(
+        `Plex request failed: ${res.status} ${res.statusText} for ${path}`
+      );
     }
     const contentType = res.headers.get("content-type") ?? "";
     if (!contentType.includes("json")) {
       throw new Error(
-        `Plex returned ${contentType || "non-JSON"} for ${path}; expected application/json`,
+        `Plex returned ${contentType || "non-JSON"} for ${path}; expected application/json`
       );
     }
-    return (await res.json()) as T;
+    const payload = jsonValueSchema.safeParse(await res.json());
+    if (!payload.success) {
+      throw new Error(`Plex returned an invalid JSON payload for ${path}`);
+    }
+    return payload.data;
   }
 
   /**
@@ -175,91 +300,116 @@ export class PlexClient {
       },
     });
     if (!res.ok) {
-      throw new Error(`Plex request failed: ${res.status} ${res.statusText} for ${path}`);
+      throw new Error(
+        `Plex request failed: ${res.status} ${res.statusText} for ${path}`
+      );
     }
     // Drain the body so the connection is reusable.
     await res.arrayBuffer();
   }
 
-  private buildBrowsePath(sectionKey: string | number, type: number, opts?: BrowseOptions): string {
+  private static buildBrowsePath(
+    sectionKey: string | number,
+    type: number,
+    opts?: BrowseOptions
+  ): string {
     const params = new URLSearchParams();
     params.set("type", String(type));
-    if (opts?.sort) params.set("sort", opts.sort);
-    if (opts?.filter) params.set("filter", opts.filter);
-    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
-    if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
+    if (opts?.sort !== undefined && opts.sort !== "") {
+      params.set("sort", opts.sort);
+    }
+    if (opts?.filter !== undefined && opts.filter !== "") {
+      params.set("filter", opts.filter);
+    }
+    if (opts?.limit !== undefined) {
+      params.set("limit", String(opts.limit));
+    }
+    if (opts?.offset !== undefined) {
+      params.set("offset", String(opts.offset));
+    }
     return `/library/sections/${sectionKey}/all?${params.toString()}`;
   }
 
   /** Fetch a `Metadata[]` container and validate its items with a per-type schema. */
-  private async parseItems<T extends { type: string }>(
+  private async parseItems<T>(
     sectionKey: string | number,
     type: number,
     opts: BrowseOptions | undefined,
-    path: string = this.buildBrowsePath(sectionKey, type, opts),
+    schema: z.ZodType<T>,
+    path: string = PlexClient.buildBrowsePath(sectionKey, type, opts)
   ): Promise<T[]> {
-    const payload = await this.request<unknown>(path);
-    const envelope = container<{ Metadata?: T[] }>(payload, path);
+    const payload = await this.request(path);
+    const envelope = container<{ Metadata?: unknown[] }>(payload, path);
     const items = envelope.MediaContainer?.Metadata ?? [];
-    if (items.length === 0) return [];
-    let schema: z.ZodType<T> | undefined;
-    switch (type) {
-      case 8:
-        // SAFETY: Plex type 8 items are validated as artists before returning as T.
-        schema = artistSchema as unknown as z.ZodType<T>;
-        break;
-      case 9:
-        // SAFETY: Plex type 9 items are validated as albums before returning as T.
-        schema = albumSchema as unknown as z.ZodType<T>;
-        break;
-      case 10:
-        // SAFETY: Plex type 10 items are validated as tracks before returning as T.
-        schema = trackSchema as unknown as z.ZodType<T>;
-        break;
-    }
-    if (!schema) return items;
-    return filterItems(schema, items as unknown[], path);
+    return filterItems(schema, items, path);
   }
 
   /** Fetch `/library/metadata/{ratingKey}` and validate the items against a per-type schema. */
-  private async parseMetadata<T extends { type: string }>(
-    ratingKey: string | number,
-  ): Promise<{ items: T[]; totals: PlexMetadata }> {
+  private async parseMetadata(
+    ratingKey: string | number
+  ): Promise<{ items: MetadataItem[]; totals: PlexMetadata }> {
     const path = `/library/metadata/${ratingKey}`;
-    const payload = await this.request<unknown>(path);
-    const envelope = container<{ Metadata?: T[] } & PlexMetadata>(payload, path);
+    const payload = await this.request(path);
+    const envelope = container<{ Metadata?: RawMetadataItem[] } & PlexMetadata>(
+      payload,
+      path
+    );
     const mc = envelope.MediaContainer;
     const items = mc?.Metadata ?? [];
-    if (items.length > 0) {
-      const sample = items[0] as { type?: string };
-      // SAFETY: The sample's runtime type selects the schema that validates every item as T.
-      const schema: z.ZodType<T> | undefined =
-        sample.type === "album"
-          ? (albumSchema as unknown as z.ZodType<T>)
-          : sample.type === "artist"
-            ? (artistSchema as unknown as z.ZodType<T>)
-            : sample.type === "track"
-              ? (trackSchema as unknown as z.ZodType<T>)
-              : sample.type === "playlist"
-                ? (playlistSchema as unknown as z.ZodType<T>)
-                : undefined;
-      if (schema) {
-        const parsed = filterItems(schema, items as unknown[], path);
-        return { items: parsed, totals: this.totals(mc ?? {}) };
-      } else {
+    const [sample] = items;
+    const sampleType = sample?.type;
+    switch (sampleType) {
+      case "album": {
+        return {
+          items: filterItems(albumSchema, items, path),
+          totals: PlexClient.totals(mc ?? {}),
+        };
+      }
+      case "artist": {
+        return {
+          items: filterItems(artistSchema, items, path),
+          totals: PlexClient.totals(mc ?? {}),
+        };
+      }
+      case "track": {
+        return {
+          items: filterItems(trackSchema, items, path),
+          totals: PlexClient.totals(mc ?? {}),
+        };
+      }
+      case "playlist": {
+        return {
+          items: filterItems(playlistSchema, items, path),
+          totals: PlexClient.totals(mc ?? {}),
+        };
+      }
+      case undefined: {
+        return {
+          items,
+          totals: PlexClient.totals(mc ?? {}),
+        };
+      }
+      default: {
         console.error(
-          `Plex response validation skipped for unknown item type (${path}): ${String(sample.type)}`,
+          `Plex response validation skipped for unknown item type (${path}): ${sampleType}`
         );
+        return {
+          items,
+          totals: PlexClient.totals(mc ?? {}),
+        };
       }
     }
-    return { items, totals: this.totals(mc ?? {}) };
   }
 
-  private totals(envelope: { size?: number; leafCount?: number; duration?: number }): PlexMetadata {
+  private static totals(envelope: {
+    size?: number;
+    leafCount?: number;
+    duration?: number;
+  }): PlexMetadata {
     return {
-      size: envelope.size,
-      leafCount: envelope.leafCount,
       duration: envelope.duration,
+      leafCount: envelope.leafCount,
+      size: envelope.size,
     };
   }
 
@@ -271,18 +421,24 @@ export class PlexClient {
   private async parseContainerArray<T>(
     path: string,
     schema: z.ZodType<T>,
-    key: "Metadata" | "Hub" | "Directory",
+    key: "Metadata" | "Hub" | "Directory"
   ): Promise<T[]> {
-    const payload = await this.request<unknown>(path);
+    const payload = await this.request(path);
     const envelope = container<Record<string, T[]>>(payload, path);
     const items = envelope.MediaContainer?.[key] ?? [];
-    if (items.length === 0) return [];
-    return filterItems(schema, items as unknown[], path);
+    if (items.length === 0) {
+      return [];
+    }
+    return filterItems(schema, items, path);
   }
 
   /** All library sections. */
   async getSections(): Promise<PlexSection[]> {
-    return this.parseContainerArray<PlexSection>("/library/sections", sectionSchema, "Directory");
+    return await this.parseContainerArray<PlexSection>(
+      "/library/sections",
+      sectionSchema,
+      "Directory"
+    );
   }
 
   /** Sections whose type is "artist" (music libraries). */
@@ -292,18 +448,27 @@ export class PlexClient {
   }
 
   /** Artists in a library section, with optional sort/filter/limit. */
-  async getArtists(sectionKey: string | number, opts?: BrowseOptions): Promise<PlexArtist[]> {
-    return this.getItems<PlexArtist>(sectionKey, 8, opts);
+  async getArtists(
+    sectionKey: string | number,
+    opts?: BrowseOptions
+  ): Promise<PlexArtist[]> {
+    return await this.parseItems(sectionKey, 8, opts, artistSchema);
   }
 
   /** Albums in a library section, with optional sort/filter/limit. */
-  async getAlbums(sectionKey: string | number, opts?: BrowseOptions): Promise<PlexAlbum[]> {
-    return this.getItems<PlexAlbum>(sectionKey, 9, opts);
+  async getAlbums(
+    sectionKey: string | number,
+    opts?: BrowseOptions
+  ): Promise<PlexAlbum[]> {
+    return await this.parseItems(sectionKey, 9, opts, albumSchema);
   }
 
   /** Tracks in a library section, with optional sort/filter/limit. */
-  async getTracks(sectionKey: string | number, opts?: BrowseOptions): Promise<PlexTrack[]> {
-    return this.getItems<PlexTrack>(sectionKey, 10, opts);
+  async getTracks(
+    sectionKey: string | number,
+    opts?: BrowseOptions
+  ): Promise<PlexTrack[]> {
+    return await this.parseItems(sectionKey, 10, opts, trackSchema);
   }
 
   /**
@@ -312,17 +477,54 @@ export class PlexClient {
    * 10=track. Other common types: 1=movie, 2=show, 4=episode, 13=photo,
    * 14=photoalbum, 18=collection.
    */
-  async getItems<T extends { type: string }>(
+  async getItems(
+    sectionKey: string | number,
+    type: 8,
+    opts?: BrowseOptions
+  ): Promise<PlexArtist[]>;
+  async getItems(
+    sectionKey: string | number,
+    type: 9,
+    opts?: BrowseOptions
+  ): Promise<PlexAlbum[]>;
+  async getItems(
+    sectionKey: string | number,
+    type: 10,
+    opts?: BrowseOptions
+  ): Promise<PlexTrack[]>;
+  async getItems(
     sectionKey: string | number,
     type: number,
-    opts?: BrowseOptions,
-  ): Promise<T[]> {
-    return this.parseItems<T>(sectionKey, type, opts);
+    opts?: BrowseOptions
+  ): Promise<PlexHubItem[]>;
+  async getItems(
+    sectionKey: string | number,
+    type: number,
+    opts?: BrowseOptions
+  ): Promise<PlexHubItem[]> {
+    switch (type) {
+      case 8: {
+        return await this.parseItems(sectionKey, type, opts, artistSchema);
+      }
+      case 9: {
+        return await this.parseItems(sectionKey, type, opts, albumSchema);
+      }
+      case 10: {
+        return await this.parseItems(sectionKey, type, opts, trackSchema);
+      }
+      default: {
+        return await this.parseItems(sectionKey, type, opts, hubItemSchema);
+      }
+    }
   }
 
   /** All playlists on the server. */
   async getPlaylists(): Promise<PlexPlaylist[]> {
-    return this.parseContainerArray<PlexPlaylist>("/playlists", playlistSchema, "Metadata");
+    return await this.parseContainerArray<PlexPlaylist>(
+      "/playlists",
+      playlistSchema,
+      "Metadata"
+    );
   }
 
   /** Music (audio) playlists on the server. */
@@ -333,30 +535,33 @@ export class PlexClient {
 
   /** All artists across every music section, deduplicated by rating key. */
   async getAllArtists(): Promise<PlexArtist[]> {
-    return this.getAllByType(8);
+    return await this.getAllByType(8);
   }
 
   /** All albums across every music section, deduplicated by rating key. */
   async getAllAlbums(): Promise<PlexAlbum[]> {
-    return this.getAllByType(9);
+    return await this.getAllByType(9);
   }
 
   /** All tracks across every music section, deduplicated by rating key. */
   async getAllTracks(): Promise<PlexTrack[]> {
-    return this.getAllByType(10);
+    return await this.getAllByType(10);
   }
 
   /** Items of one media type across every music section, deduplicated by rating key. */
-  private async getAllByType<T extends { type: string; ratingKey: string }>(
-    type: number,
-  ): Promise<T[]> {
+  private async getAllByType(type: 8): Promise<PlexArtist[]>;
+  private async getAllByType(type: 9): Promise<PlexAlbum[]>;
+  private async getAllByType(type: 10): Promise<PlexTrack[]>;
+  private async getAllByType(type: number): Promise<PlexHubItem[]> {
     const sections = await this.getMusicSections();
     const perSection = await Promise.all(
-      sections.map((section) => this.getItems<T>(section.key, type)),
+      sections.map(async (section) => await this.getItems(section.key, type))
     );
     const seen = new Set<string>();
     return perSection.flat().filter((item) => {
-      if (seen.has(item.ratingKey)) return false;
+      if (seen.has(item.ratingKey)) {
+        return false;
+      }
       seen.add(item.ratingKey);
       return true;
     });
@@ -373,39 +578,62 @@ export class PlexClient {
     tracks: PlexTrack[];
   }> {
     const trimmed = query.trim();
-    const empty: {
+    const empty = {
+      albums: [],
+      artists: [],
+      tracks: [],
+    } satisfies {
       artists: PlexArtist[];
       albums: PlexAlbum[];
       tracks: PlexTrack[];
-    } = {
-      artists: [],
-      albums: [],
-      tracks: [],
     };
-    if (!trimmed) return empty;
+    if (!trimmed) {
+      return empty;
+    }
     const path = `/hubs/search?query=${encodeURIComponent(trimmed)}&limit=20`;
-    const hubs = await this.parseContainerArray<PlexHub>(path, hubSchema, "Hub");
+    const hubs = await this.parseContainerArray<PlexHub>(
+      path,
+      hubSchema,
+      "Hub"
+    );
     const items = hubs.flatMap((hub) => hub.Metadata ?? []);
     const artists: PlexArtist[] = [];
     const albums: PlexAlbum[] = [];
     const tracks: PlexTrack[] = [];
     const seen = new Set<string>();
     for (const item of items) {
-      if (seen.has(item.ratingKey)) continue;
+      if (seen.has(item.ratingKey)) {
+        continue;
+      }
       seen.add(item.ratingKey);
       switch (item.type) {
-        case "artist":
-          artists.push(item as PlexArtist);
+        case "artist": {
+          const [artist] = filterItems(artistSchema, [item], path);
+          if (artist !== undefined) {
+            artists.push(artist);
+          }
           break;
-        case "album":
-          albums.push(item as PlexAlbum);
+        }
+        case "album": {
+          const [album] = filterItems(albumSchema, [item], path);
+          if (album !== undefined) {
+            albums.push(album);
+          }
           break;
-        case "track":
-          tracks.push(item as PlexTrack);
+        }
+        case "track": {
+          const [track] = filterItems(trackSchema, [item], path);
+          if (track !== undefined) {
+            tracks.push(track);
+          }
           break;
+        }
+        default: {
+          break;
+        }
       }
     }
-    return { artists, albums, tracks };
+    return { albums, artists, tracks };
   }
 
   /**
@@ -415,33 +643,51 @@ export class PlexClient {
    * direct global-hub query for callers that need a specific hub set.
    */
   async getHomeHubs(identifiers?: string[]): Promise<PlexHub[]> {
-    const query = identifiers?.length ? `?identifier=${identifiers.join(",")}` : "";
-    if (identifiers?.length) {
-      return this.parseContainerArray<PlexHub>(`/hubs${query}`, hubSchema, "Hub");
+    const hasIdentifiers = identifiers !== undefined && identifiers.length > 0;
+    const query = hasIdentifiers ? `?identifier=${identifiers.join(",")}` : "";
+    if (hasIdentifiers) {
+      return await this.parseContainerArray<PlexHub>(
+        `/hubs${query}`,
+        hubSchema,
+        "Hub"
+      );
     }
 
     const [globalHubs, sections] = await Promise.all([
       this.parseContainerArray<PlexHub>("/hubs", hubSchema, "Hub"),
       this.getMusicSections(),
     ]);
-    if (sections.length === 0) return globalHubs;
-    const [sectionHubs, recentlyPlayed] = await Promise.all([
-      Promise.all(sections.map((section) => this.getSectionHubs(section.key))).then((hubs) =>
-        hubs.flat(),
+    if (sections.length === 0) {
+      return globalHubs;
+    }
+    const [sectionHubGroups, recentlyPlayed] = await Promise.all([
+      Promise.all(
+        sections.map(async (section) => await this.getSectionHubs(section.key))
       ),
       this.getRecentlyPlayedForSections(sections),
     ]);
-    return replaceRecentlyPlayedPreview(composeHomeHubs(sectionHubs, globalHubs), recentlyPlayed);
+    return replaceRecentlyPlayedPreview(
+      composeHomeHubs(sectionHubGroups.flat(), globalHubs),
+      recentlyPlayed
+    );
   }
 
   /** Hubs for a library section via `/hubs/sections/{key}`. */
   async getSectionHubs(sectionKey: string | number): Promise<PlexHub[]> {
-    return this.parseContainerArray<PlexHub>(`/hubs/sections/${sectionKey}`, hubSchema, "Hub");
+    return await this.parseContainerArray<PlexHub>(
+      `/hubs/sections/${sectionKey}`,
+      hubSchema,
+      "Hub"
+    );
   }
 
   /** Load every item for a Home row from the full-data key Plex attaches to the hub. */
   async getHomeHubItems(key: string): Promise<PlexHubItem[]> {
-    return this.parseContainerArray<PlexHubItem>(key, hubItemSchema, "Metadata");
+    return await this.parseContainerArray<PlexHubItem>(
+      key,
+      hubItemSchema,
+      "Metadata"
+    );
   }
 
   /**
@@ -452,10 +698,12 @@ export class PlexClient {
    */
   async getRecentlyPlayed(): Promise<PlexHubItem[]> {
     const sections = await this.getMusicSections();
-    return this.getRecentlyPlayedForSections(sections);
+    return await this.getRecentlyPlayedForSections(sections);
   }
 
-  private async getRecentlyPlayedForSections(sections: PlexSection[]): Promise<PlexHubItem[]> {
+  private async getRecentlyPlayedForSections(
+    sections: PlexSection[]
+  ): Promise<PlexHubItem[]> {
     const perSection = await Promise.all(
       sections.map(async (section) => {
         const [artists, albums, tracks] = await Promise.all([
@@ -464,26 +712,30 @@ export class PlexClient {
           this.getRecentlyPlayedByType(section.key, 10),
         ]);
         return [...artists, ...albums, ...tracks];
-      }),
+      })
     );
     const seen = new Set<string>();
     const unique = perSection.flat().filter((item) => {
-      if (seen.has(item.ratingKey)) return false;
+      if (seen.has(item.ratingKey)) {
+        return false;
+      }
       seen.add(item.ratingKey);
       return true;
     });
-    return unique.sort((a, b) => (b.lastViewedAt ?? 0) - (a.lastViewedAt ?? 0));
+    return unique.toSorted(
+      (a, b) => (b.lastViewedAt ?? 0) - (a.lastViewedAt ?? 0)
+    );
   }
 
   /** Recently played items of one media type in a section, newest first. */
   private async getRecentlyPlayedByType(
     sectionKey: string | number,
-    type: number,
+    type: number
   ): Promise<PlexHubItem[]> {
-    return this.parseContainerArray<PlexHubItem>(
+    return await this.parseContainerArray<PlexHubItem>(
       `/library/sections/${sectionKey}/all?viewCount%3E=1&type=${type}&sort=lastViewedAt:desc`,
       hubItemSchema,
-      "Metadata",
+      "Metadata"
     );
   }
 
@@ -496,21 +748,28 @@ export class PlexClient {
     const sections = await this.getMusicSections();
     const perSection = await Promise.all(
       sections.map(async (section) => {
-        const since = sinceMs === undefined ? undefined : new Date(sinceMs).getTime() / 1000;
-        return this.parseContainerArray<PlexHubItem>(
-          `/library/sections/${section.key}/all?viewCount%3E=1&type=10&sort=viewCount:desc${since === undefined ? "" : `&addedAt%3E=${Math.floor(since)}`}`,
+        const since =
+          sinceMs === undefined
+            ? undefined
+            : new Date(sinceMs).getTime() / 1000;
+        const addedAtQuery =
+          since === undefined ? "" : `&addedAt%3E=${Math.floor(since)}`;
+        return await this.parseContainerArray<PlexHubItem>(
+          `/library/sections/${section.key}/all?viewCount%3E=1&type=10&sort=viewCount:desc${addedAtQuery}`,
           hubItemSchema,
-          "Metadata",
+          "Metadata"
         );
-      }),
+      })
     );
     const seen = new Set<string>();
     const unique = perSection.flat().filter((item) => {
-      if (seen.has(item.ratingKey)) return false;
+      if (seen.has(item.ratingKey)) {
+        return false;
+      }
       seen.add(item.ratingKey);
       return true;
     });
-    return unique.sort((a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0));
+    return unique.toSorted((a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0));
   }
 
   /**
@@ -518,10 +777,10 @@ export class PlexClient {
    * `PlexMetadata` carries the top-level `MediaContainer` totals
    * (`size`/`leafCount`/`duration`) that drive the "N songs, M min" headers.
    */
-  async getMetadata<T extends { type: string }>(
-    ratingKey: string | number,
-  ): Promise<{ items: T[]; totals: PlexMetadata }> {
-    return this.parseMetadata<T>(ratingKey);
+  async getMetadata(
+    ratingKey: string | number
+  ): Promise<{ items: MetadataItem[]; totals: PlexMetadata }> {
+    return await this.parseMetadata(ratingKey);
   }
 
   /** Album metadata + its tracks, in Plex track order (disc, then index). */
@@ -529,19 +788,21 @@ export class PlexClient {
     album: PlexAlbum;
     tracks: PlexTrack[];
   }> {
-    const { items } = await this.getMetadata<{ type: string }>(ratingKey);
-    const album = items.find((i) => i.type === "album") as PlexAlbum | undefined;
+    const { items } = await this.getMetadata(ratingKey);
+    const album = items.find(
+      (item): item is PlexAlbum => item.type === "album"
+    );
     const tracks = await this.parseContainerArray<PlexTrack>(
       `/library/metadata/${ratingKey}/children`,
       trackSchema,
-      "Metadata",
+      "Metadata"
     );
     return {
       album: album ?? {
-        ratingKey: String(ratingKey),
         key: "",
-        type: "album",
+        ratingKey: String(ratingKey),
         title: "",
+        type: "album",
       },
       tracks: tracks.filter((item) => item.type === "track"),
     };
@@ -556,8 +817,10 @@ export class PlexClient {
     topTracks: PlexTrack[];
     albums: PlexAlbum[];
   }> {
-    const { items } = await this.getMetadata<{ type: string }>(ratingKey);
-    const artist = items.find((i) => i.type === "artist") as PlexArtist | undefined;
+    const { items } = await this.getMetadata(ratingKey);
+    const artist = items.find(
+      (item): item is PlexArtist => item.type === "artist"
+    );
     const genres = artist?.Genre?.map((g) => g.tag) ?? [];
 
     // Plex does not populate childCount/leafCount on artist metadata, so
@@ -569,55 +832,62 @@ export class PlexClient {
     const albumsPromise = this.parseContainerArray<PlexAlbum>(
       `/library/metadata/${ratingKey}/children`,
       albumSchema,
-      "Metadata",
+      "Metadata"
     );
     const perSection = await Promise.all(
       sections.map(async (section) => {
         const tracksParams = new URLSearchParams({
-          type: "10",
           filter: `artist.id=${ratingKey}`,
           sort: "viewCount:desc",
+          type: "10",
         });
         const tracksData = await this.parseContainerArray<PlexTrack>(
           `/library/sections/${section.key}/all?${tracksParams.toString()}`,
           trackSchema,
-          "Metadata",
+          "Metadata"
         );
         return { tracks: tracksData };
-      }),
+      })
     );
     const artistAlbums = await albumsPromise;
-    const totalSongs = perSection.reduce((n, s) => n + s.tracks.length, 0);
+    let totalSongs = 0;
+    for (const section of perSection) {
+      totalSongs += section.tracks.length;
+    }
     const totalAlbums = artistAlbums.length;
 
     const seenTracks = new Set<string>();
-    const tracks = perSection.reduce<PlexTrack[]>((unique, section) => {
-      return section.tracks.reduce((items, item) => {
-        if (seenTracks.has(item.ratingKey)) return items;
-        seenTracks.add(item.ratingKey);
-        items.push(item);
-        return items;
-      }, unique);
-    }, []);
+    const tracks: PlexTrack[] = [];
+    for (const section of perSection) {
+      for (const track of section.tracks) {
+        if (seenTracks.has(track.ratingKey)) {
+          continue;
+        }
+        seenTracks.add(track.ratingKey);
+        tracks.push(track);
+      }
+    }
     const seenAlbums = new Set<string>();
     const albums = artistAlbums.filter((album) => {
-      if (seenAlbums.has(album.ratingKey)) return false;
+      if (seenAlbums.has(album.ratingKey)) {
+        return false;
+      }
       seenAlbums.add(album.ratingKey);
       return true;
     });
 
     return {
+      albumCount: totalAlbums > 0 ? totalAlbums : (artist?.childCount ?? 0),
+      albums,
       artist: artist ?? {
-        ratingKey: String(ratingKey),
         key: "",
-        type: "artist",
+        ratingKey: String(ratingKey),
         title: "",
+        type: "artist",
       },
       genres,
-      albumCount: totalAlbums || artist?.childCount || 0,
-      songCount: totalSongs || artist?.leafCount || 0,
+      songCount: totalSongs > 0 ? totalSongs : (artist?.leafCount ?? 0),
       topTracks: tracks.slice(0, 30),
-      albums,
     };
   }
 
@@ -629,18 +899,18 @@ export class PlexClient {
     const playlists = await this.parseContainerArray<PlexPlaylist>(
       `/playlists/${key}`,
       playlistSchema,
-      "Metadata",
+      "Metadata"
     );
     const playlist = playlists[0] ?? {
-      ratingKey: String(key),
       key: `/playlists/${key}`,
-      type: "playlist",
+      ratingKey: String(key),
       title: "",
+      type: "playlist",
     };
     const tracks = await this.parseContainerArray<PlexTrack>(
       `/playlists/${key}/items`,
       trackSchema,
-      "Metadata",
+      "Metadata"
     );
     return {
       playlist,
@@ -653,7 +923,7 @@ export class PlexClient {
    * via `/api/v2/user`, for the Sidebar user row and Connected card.
    */
   async getAccount(): Promise<PlexAccount> {
-    return getPlexAccount(this._token);
+    return await getPlexAccount(this._token);
   }
 
   /**
@@ -662,12 +932,12 @@ export class PlexClient {
    * Server Selection and the sidebar dropdown; never persisted.
    */
   async getServers(): Promise<PlexServerInfo[]> {
-    return discoverPlexServers(this._token, this._clientIdentifier);
+    return await discoverPlexServers(this._token, this._clientIdentifier);
   }
 
   /** Reachability of a server: GET `/identity` with the token, ~3s timeout. */
-  async checkServerStatus(url: string, token: string = this.token): Promise<boolean> {
-    return checkPlexServerStatus(url, token);
+  async checkServerStatus(url: string, token?: string): Promise<boolean> {
+    return await checkPlexServerStatus(url, token ?? this._token);
   }
 
   /**
@@ -676,13 +946,13 @@ export class PlexClient {
    */
   async scrobble(key: string): Promise<void> {
     await this.requestRaw(
-      `/:/scrobble?identifier=com.plexapp.plugins.library&key=${encodeURIComponent(key)}`,
+      `/:/scrobble?identifier=com.plexapp.plugins.library&key=${encodeURIComponent(key)}`
     );
   }
 
   async unscrobble(key: string): Promise<void> {
     await this.requestRaw(
-      `/:/unscrobble?identifier=com.plexapp.plugins.library&key=${encodeURIComponent(key)}`,
+      `/:/unscrobble?identifier=com.plexapp.plugins.library&key=${encodeURIComponent(key)}`
     );
   }
 
@@ -694,76 +964,5 @@ export class PlexClient {
   /** Account token; used to build media URLs (e.g. streamUrl). */
   get token(): string {
     return this._token;
-  }
-}
-
-/**
- * The account's Plex.tv profile. Token-only — usable before a server is
- * selected (Connected card, sidebar user row).
- */
-export async function getPlexAccount(token: string): Promise<PlexAccount> {
-  const res = await fetch("https://plex.tv/api/v2/user", {
-    headers: {
-      Accept: "application/json",
-      "X-Plex-Token": token,
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch Plex account: ${res.status} ${res.statusText}`);
-  }
-  const user = (await res.json()) as unknown;
-  const parsed = parseStrict(plexAccountSchema, user, "plex.tv /api/v2/user");
-  if (!parsed) {
-    throw new Error("Failed to fetch Plex account: unexpected response from plex.tv");
-  }
-  // plex.tv reports account confirmation as `confirmed`; the app's domain
-  // shape calls it `verified` (drives the Connected card's verified badge).
-  return {
-    username: parsed.username,
-    email: parsed.email,
-    thumb: parsed.thumb,
-    verified: parsed.confirmed === true,
-  };
-}
-
-/**
- * Servers owned by the account, each with its best connection URI and a
- * fresh `/identity` reachability check (parallel, short timeout). Used by
- * Server Selection and the sidebar dropdown; never persisted.
- */
-export async function discoverPlexServers(
-  token: string,
-  clientIdentifier: string,
-): Promise<PlexServerInfo[]> {
-  const resources = await discoverServers(token, clientIdentifier);
-  return Promise.all(
-    resources.map(async (resource) => {
-      const serverToken = resource.accessToken ?? token;
-      const candidates = connectionCandidates(resource);
-      const selected = await selectReachableConnection(resource, serverToken);
-      const fallback = candidates[0];
-      const connection = selected ?? fallback;
-      return {
-        name: resource.name,
-        clientIdentifier: resource.clientIdentifier,
-        url: connection?.uri ?? "",
-        token: serverToken,
-        local: connection?.local ?? false,
-        online: selected !== undefined,
-      };
-    }),
-  );
-}
-
-/** Reachability of a server: GET `/identity` with the token, ~3s timeout. */
-export async function checkPlexServerStatus(url: string, token: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${url.replace(/\/+$/, "")}/identity`, {
-      headers: { Accept: "application/json", "X-Plex-Token": token },
-      signal: AbortSignal.timeout(DEFAULT_STATUS_TIMEOUT_MS),
-    });
-    return res.ok;
-  } catch {
-    return false;
   }
 }

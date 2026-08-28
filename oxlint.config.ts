@@ -1,0 +1,14 @@
+import { defineConfig } from "oxlint";
+import antiSlop from "ultracite/oxlint/anti-slop";
+import core from "ultracite/oxlint/core";
+import { jsPluginSettings, selectJsPlugins } from "ultracite/oxlint/js-plugins";
+import react from "ultracite/oxlint/react";
+
+const jsPlugins = selectJsPlugins(["github", "sonarjs", "react-doctor"]);
+
+export default defineConfig({
+  extends: [core, react, antiSlop, jsPlugins],
+  ignorePatterns: core.ignorePatterns,
+  jsPlugins: jsPlugins.jsPlugins,
+  settings: jsPluginSettings,
+});

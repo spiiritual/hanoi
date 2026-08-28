@@ -1,10 +1,5 @@
-/**
- * Electrobun RPC schema for the Plex client. Both sides import this file:
- * the bun side registers request handlers (`BrowserView.defineRPC`), the
- * view side calls them (`Electroview.defineRPC` + `new Electroview`).
- * The token never crosses into the renderer for artwork — the view receives
- * artwork bytes; the authenticated stream URL remains available for audio.
- */
+import type { ArtworkRpcResult, ArtworkVariant } from "./artwork/types.ts";
+import type { BrowseOptions } from "./client.ts";
 import type {
   PlexAccount,
   PlexAlbum,
@@ -16,26 +11,42 @@ import type {
   PlexServerInfo,
   PlexTrack,
 } from "./types.ts";
-import type { BrowseOptions } from "./client.ts";
-import type { ArtworkRpcResult, ArtworkVariant } from "./artwork/types.ts";
+
+/**
+ * Electrobun RPC schema for the Plex client. Both sides import this file:
+ * the bun side registers request handlers (`BrowserView.defineRPC`), the
+ * view side calls them (`Electroview.defineRPC` + `new Electroview`).
+ * Authentication tokens never cross into the renderer for artwork — the view receives
+ * artwork bytes; the authenticated stream URL remains available for audio.
+ */
+type RpcResponse = ReturnType<() => void>;
 
 /**
  * Server info as seen by the view — the per-server token never leaves the
  * main process. `local` and `online` are measured during discovery and are
  * intentionally available to the server picker, but never persisted.
  */
-export type ServerViewSummary = Pick<PlexServerInfo, "name" | "clientIdentifier" | "url"> &
+export type ServerViewSummary = Pick<
+  PlexServerInfo,
+  "name" | "clientIdentifier" | "url"
+> &
   Partial<Pick<PlexServerInfo, "local" | "online">>;
 
-export type PlexRpc = {
+export interface PlexRpc {
   bun: {
     requests: {
       // auth lifecycle
-      beginAuth: { params: void; response: { authUrl: string; pinCode: string } };
-      cancelAuth: { params: void; response: void };
-      selectServer: { params: { clientIdentifier: string }; response: void };
+      beginAuth: {
+        params: undefined;
+        response: { authUrl: string; pinCode: string };
+      };
+      cancelAuth: { params: undefined; response: RpcResponse };
+      selectServer: {
+        params: { clientIdentifier: string };
+        response: RpcResponse;
+      };
       getAuthState: {
-        params: void;
+        params: undefined;
         response: {
           authenticated: boolean;
           hasServer: boolean;
@@ -45,13 +56,13 @@ export type PlexRpc = {
           server?: ServerViewSummary;
         };
       };
-      disconnect: { params: void; response: void };
+      disconnect: { params: undefined; response: RpcResponse };
       // account + servers
-      getAccount: { params: void; response: PlexAccount };
-      getServers: { params: void; response: ServerViewSummary[] };
-      checkServerStatus: { params: void; response: boolean };
+      getAccount: { params: undefined; response: PlexAccount };
+      getServers: { params: undefined; response: ServerViewSummary[] };
+      checkServerStatus: { params: undefined; response: boolean };
       // browse
-      getMusicSections: { params: void; response: PlexSection[] };
+      getMusicSections: { params: undefined; response: PlexSection[] };
       getArtists: {
         params: { sectionKey: string; opts?: BrowseOptions };
         response: PlexArtist[];
@@ -64,7 +75,7 @@ export type PlexRpc = {
         params: { sectionKey: string; opts?: BrowseOptions };
         response: PlexTrack[];
       };
-      getPlaylists: { params: void; response: PlexPlaylist[] };
+      getPlaylists: { params: undefined; response: PlexPlaylist[] };
       // detail
       getAlbum: {
         params: { ratingKey: string };
@@ -91,7 +102,7 @@ export type PlexRpc = {
         response: PlexHub[];
       };
       getHomeHubItems: { params: { key: string }; response: PlexHubItem[] };
-      getRecentlyPlayed: { params: void; response: PlexHubItem[] };
+      getRecentlyPlayed: { params: undefined; response: PlexHubItem[] };
       getMostPlayed: { params: { sinceMs?: number }; response: PlexHubItem[] };
       // search
       search: {
@@ -113,12 +124,15 @@ export type PlexRpc = {
         params: { variant?: ArtworkVariant };
         response: ArtworkRpcResult;
       };
-      scrobble: { params: { key: string }; response: void };
+      scrobble: { params: { key: string }; response: RpcResponse };
       // system helpers (main process only)
-      openExternal: { params: { url: string }; response: void };
-      clipboardWriteText: { params: { text: string }; response: void };
+      openExternal: { params: { url: string }; response: RpcResponse };
+      clipboardWriteText: { params: { text: string }; response: RpcResponse };
     };
-    messages: {};
+    messages: Record<never, never>;
   };
-  webview: { requests: {}; messages: {} };
-};
+  webview: {
+    messages: Record<never, never>;
+    requests: Record<never, never>;
+  };
+}

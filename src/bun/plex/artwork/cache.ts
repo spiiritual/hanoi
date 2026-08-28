@@ -1,8 +1,18 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { Database } from "bun:sqlite";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
+
+import { z } from "zod";
+
 import type {
   ArtworkCacheEntry,
   ArtworkCacheOptions,
@@ -15,17 +25,33 @@ import type {
   ArtworkVariantValue,
 } from "./types.ts";
 
+export type {
+  ArtworkCacheEntry,
+  ArtworkCacheOptions,
+  ArtworkFetchRequest,
+  ArtworkFetchResponse,
+  ArtworkFetcher,
+  ArtworkNamespace,
+  ArtworkRequest,
+  ArtworkVariant,
+} from "./types.ts";
+
 const DEFAULT_MEMORY_MAX_ENTRIES = 100;
-const DEFAULT_MAX_ENTRIES = 1_000;
+const DEFAULT_MAX_ENTRIES = 1000;
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_MAX_OBJECT_BYTES = 25 * 1024 * 1024;
-const DEFAULT_FRESH_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
-const DEFAULT_STALE_WHILE_REVALIDATE_MS = 30 * 24 * 60 * 60 * 1_000;
+const DEFAULT_FRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_STALE_WHILE_REVALIDATE_MS = 30 * 24 * 60 * 60 * 1000;
 const OBJECTS_DIRECTORY = "objects";
 const DATABASE_FILENAME = "metadata.sqlite";
-const TOKEN_PARAMETER = /(?:^|[?&])x-plex-token=/i;
-const TOKEN_TEXT = /x-plex-token/i;
+const TOKEN_PARAMETER = /(?:^|[?&])x-plex-token=/iu;
+const TOKEN_TEXT = /x-plex-token/iu;
 const MAX_TOKEN_DECODE_DEPTH = 32;
+const EMPTY_ARTWORK_BODY_ERROR = "Artwork response has an empty body";
+const INVALID_VARIANT_ERROR = "Artwork metadata contains an invalid variant";
+const IMAGE_CONTENT_TYPE_ERROR =
+  "Artwork response must have an image content type";
+const DELETE_ARTWORK_SQL = "DELETE FROM artwork WHERE key = ?";
 const IMAGE_MIME_TYPES = new Set([
   "image/apng",
   "image/avif",
@@ -84,14 +110,28 @@ interface NamespaceLifecycle {
   generation: number;
   active: number;
   clearing: boolean;
-  idleResolvers: Array<() => void>;
-  clearPromise?: Promise<void>;
+  idleResolvers: (() => void)[];
+  clearPromise?: Promise<void> | null;
 }
 
 interface NamespaceLease {
   generation: number;
   release: () => void;
 }
+
+interface UntrustedRecord {
+  readonly [key: string]: UntrustedValue;
+}
+type UntrustedValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | UntrustedRecord
+  | UntrustedValue[]
+  | ArtworkNamespace
+  | NormalizedRequest;
 
 /**
  * A token-free, content-addressed artwork cache for the main process.
@@ -102,6 +142,445 @@ interface NamespaceLease {
  * Plex token can therefore remain in the caller's closure and out of every
  * cache key, filename, and metadata column.
  */
+const isString = (value: UntrustedValue): value is string =>
+  Object.prototype.toString.call(value) === "[object String]";
+
+const isNumber = (value: UntrustedValue): value is number =>
+  Object.prototype.toString.call(value) === "[object Number]";
+
+const isBoolean = (value: UntrustedValue): value is boolean =>
+  Object.prototype.toString.call(value) === "[object Boolean]";
+
+const isPlainRecord = (value: UntrustedValue): value is UntrustedRecord =>
+  Object.prototype.toString.call(value) === "[object Object]";
+
+const isVariantValue = (value: UntrustedValue): value is ArtworkVariantValue =>
+  isString(value) || isNumber(value) || isBoolean(value) || value === null;
+
+const isVariantRecord = (value: UntrustedValue): value is ArtworkVariant => {
+  if (!isPlainRecord(value)) {
+    return false;
+  }
+  return Object.keys(value).every((key) => isVariantValue(value[key]));
+};
+
+const positiveInteger = (value: number, name: string): number => {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+};
+
+const nonNegativeNumber = (value: number, name: string): number => {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be non-negative`);
+  }
+  return value;
+};
+
+const getNamespaceKey = (namespace: ArtworkNamespace): string =>
+  `${namespace.accountId}\u0000${namespace.serverId}`;
+
+const hasControlCharacters = (value: string): boolean => {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code <= 31 || code === 127) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const containsTokenMaterial = (value: UntrustedValue): boolean => {
+  if (!isString(value)) {
+    return true;
+  }
+  let candidate = value;
+  for (let attempt = 0; attempt <= MAX_TOKEN_DECODE_DEPTH; attempt += 1) {
+    if (TOKEN_TEXT.test(candidate) || TOKEN_PARAMETER.test(candidate)) {
+      return true;
+    }
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(candidate);
+    } catch {
+      return true;
+    }
+    if (decoded === candidate) {
+      return false;
+    }
+    candidate = decoded;
+  }
+  return true;
+};
+
+const normalizeIdentity = (value: UntrustedValue, name: string): string => {
+  if (!isString(value) || !value.trim()) {
+    throw new Error(`${name} is required`);
+  }
+  const normalized = value.trim();
+  if (containsTokenMaterial(normalized) || hasControlCharacters(normalized)) {
+    throw new Error(`${name} must be a non-secret identifier`);
+  }
+  return normalized;
+};
+
+const normalizeNamespace = (namespace: UntrustedValue): ArtworkNamespace => {
+  if (!isPlainRecord(namespace)) {
+    throw new Error("Artwork namespace is required");
+  }
+  const accountId = normalizeIdentity(namespace["accountId"], "accountId");
+  const serverId = normalizeIdentity(namespace["serverId"], "serverId");
+  return { accountId, serverId };
+};
+
+const assertSafeSourceQuery = (url: URL): void => {
+  for (const [name, value] of url.searchParams) {
+    if (containsTokenMaterial(name) || containsTokenMaterial(value)) {
+      throw new Error("Artwork source must not contain a Plex token");
+    }
+  }
+};
+
+const canonicalSource = (source: UntrustedValue): string => {
+  if (!isString(source) || !source.trim()) {
+    throw new Error("Artwork source is required");
+  }
+  const input = source.trim();
+  if (containsTokenMaterial(input) || TOKEN_PARAMETER.test(input)) {
+    throw new Error("Artwork source must not contain a Plex token");
+  }
+  if (/^https?:\/\//iu.test(input)) {
+    let url: URL;
+    try {
+      url = new URL(input);
+    } catch {
+      throw new Error("Artwork source is invalid");
+    }
+    assertSafeSourceQuery(url);
+    if (url.username || url.password) {
+      throw new Error("Artwork source must not contain credentials");
+    }
+    url.hash = "";
+    url.searchParams.sort();
+    return url.toString();
+  }
+  if (hasControlCharacters(input) || input.startsWith("//")) {
+    throw new Error("Artwork source is invalid");
+  }
+  const relative = new URL(input, "https://artwork.invalid");
+  assertSafeSourceQuery(relative);
+  relative.hash = "";
+  relative.searchParams.sort();
+  return `${relative.pathname}${relative.search}`;
+};
+
+const canonicalVariant = (variant: UntrustedValue): ArtworkVariant => {
+  if (!isPlainRecord(variant)) {
+    throw new Error("Artwork variant must be an object");
+  }
+  const keys = Object.keys(variant).toSorted((left, right) =>
+    left.localeCompare(right)
+  );
+  const normalized: Record<string, ArtworkVariantValue> = {};
+  Object.setPrototypeOf(normalized, null);
+  for (const key of keys) {
+    if (!key || containsTokenMaterial(key)) {
+      throw new Error("Artwork variant must not contain a token");
+    }
+    const value = variant[key];
+    if (
+      !isString(value) &&
+      !isNumber(value) &&
+      !isBoolean(value) &&
+      value !== null
+    ) {
+      throw new Error(`Artwork variant value for ${key} is not serialisable`);
+    }
+    if (isNumber(value) && !Number.isFinite(value)) {
+      throw new TypeError(`Artwork variant value for ${key} must be finite`);
+    }
+    if (isString(value) && containsTokenMaterial(value)) {
+      throw new Error("Artwork variant must not contain a token");
+    }
+    normalized[key] = value;
+  }
+  return normalized;
+};
+
+const parseVariantRecord = (value: string): ArtworkVariant => {
+  try {
+    // The raw JSON object is preserved so own `__proto__` keys survive; canonicalVariant validates it below.
+    const parsed = z.custom<UntrustedValue>().parse(JSON.parse(value));
+    if (!isVariantRecord(parsed)) {
+      throw new Error(INVALID_VARIANT_ERROR);
+    }
+    return canonicalVariant(parsed);
+  } catch {
+    throw new Error(INVALID_VARIANT_ERROR);
+  }
+};
+
+const serializeVariant = (variant: ArtworkVariant): string =>
+  JSON.stringify(
+    Object.keys(variant)
+      .toSorted((left, right) => left.localeCompare(right))
+      .map((key) => [key, variant[key]])
+  );
+
+const normalizeRequest = (request: ArtworkRequest): NormalizedRequest => {
+  const namespace = normalizeNamespace(request.namespace);
+  const source = canonicalSource(request.source);
+  if (request.variant === null) {
+    throw new Error("Artwork variant must be an object");
+  }
+  const variant = canonicalVariant(request.variant ?? {});
+  const canonicalKey = [
+    namespace.accountId,
+    namespace.serverId,
+    source,
+    serializeVariant(variant),
+  ].join("\u0000");
+  const key = createHash("sha256").update(canonicalKey).digest("hex");
+  return { key, namespace, objectName: `${key}.bin`, source, variant };
+};
+
+const isNotModified = (response: ArtworkFetchResponse | Response): boolean =>
+  response instanceof Response
+    ? response.status === 304
+    : response.notModified === true || response.status === 304;
+
+const assertObjectSize = (data: Uint8Array, maxObjectBytes: number): void => {
+  if (data.byteLength > maxObjectBytes) {
+    throw new Error(`Artwork exceeds the ${maxObjectBytes}-byte limit`);
+  }
+};
+
+type ArtworkBody = NonNullable<ArtworkFetchResponse["body"]>;
+
+const toBytes = async (
+  body: ArtworkBody,
+  maxObjectBytes: number
+): Promise<Uint8Array> => {
+  if (body instanceof Uint8Array) {
+    assertObjectSize(body, maxObjectBytes);
+    if (body.byteLength === 0) {
+      throw new Error(EMPTY_ARTWORK_BODY_ERROR);
+    }
+    return new Uint8Array(body);
+  }
+  if (body instanceof ArrayBuffer) {
+    assertObjectSize(new Uint8Array(body), maxObjectBytes);
+    if (body.byteLength === 0) {
+      throw new Error(EMPTY_ARTWORK_BODY_ERROR);
+    }
+    return new Uint8Array(body);
+  }
+  if (body instanceof Blob) {
+    if (body.size > maxObjectBytes) {
+      throw new Error(`Artwork exceeds the ${maxObjectBytes}-byte limit`);
+    }
+    const data = new Uint8Array(await body.arrayBuffer());
+    if (data.byteLength === 0) {
+      throw new Error(EMPTY_ARTWORK_BODY_ERROR);
+    }
+    return data;
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const readChunk = async (): Promise<void> => {
+    const result = await reader.read();
+    if (result.done) {
+      return;
+    }
+    const chunk = result.value;
+    total += chunk.byteLength;
+    if (total > maxObjectBytes) {
+      await reader.cancel();
+      throw new Error(`Artwork exceeds the ${maxObjectBytes}-byte limit`);
+    }
+    chunks.push(chunk);
+    await readChunk();
+  };
+  try {
+    await readChunk();
+  } finally {
+    reader.releaseLock();
+  }
+  if (total === 0) {
+    throw new Error(EMPTY_ARTWORK_BODY_ERROR);
+  }
+  const data = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return data;
+};
+
+const assertImageContentType = (contentType: UntrustedValue): void => {
+  if (!isString(contentType)) {
+    throw new TypeError(IMAGE_CONTENT_TYPE_ERROR);
+  }
+  const mime = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (!IMAGE_MIME_TYPES.has(mime)) {
+    throw new Error(IMAGE_CONTENT_TYPE_ERROR);
+  }
+};
+
+const normalizeContentType = (contentType: UntrustedValue): string => {
+  assertImageContentType(contentType);
+  if (!isString(contentType)) {
+    throw new TypeError(IMAGE_CONTENT_TYPE_ERROR);
+  }
+  return contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+};
+
+const safeHeader = (value: string | null | undefined): string | undefined => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (hasControlCharacters(value) || containsTokenMaterial(value)) {
+    throw new Error("Artwork response contains an unsafe validator");
+  }
+  return value;
+};
+
+const normalizeResponse = async (
+  response: ArtworkFetchResponse | Response,
+  maxObjectBytes: number
+): Promise<{
+  data: Uint8Array;
+  contentType: string;
+  etag?: string;
+  lastModified?: string;
+}> => {
+  if (isNotModified(response)) {
+    throw new Error("304 requires an existing artwork object");
+  }
+  if (response instanceof Response) {
+    if (!response.ok) {
+      throw new Error(`Artwork request failed: ${response.status}`);
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    assertImageContentType(contentType);
+    const length = response.headers.get("content-length");
+    if (length !== null && length !== "" && Number(length) > maxObjectBytes) {
+      throw new Error(`Artwork exceeds the ${maxObjectBytes}-byte limit`);
+    }
+    if (!response.body) {
+      throw new Error("Artwork response has no body");
+    }
+    const data = await toBytes(response.body, maxObjectBytes);
+    return {
+      contentType: normalizeContentType(contentType),
+      data,
+      etag: safeHeader(response.headers.get("etag")),
+      lastModified: safeHeader(response.headers.get("last-modified")),
+    };
+  }
+
+  const status = response.status ?? 200;
+  if (status < 200 || status >= 300) {
+    throw new Error(`Artwork request failed: ${status}`);
+  }
+  const contentType = response.contentType ?? "";
+  assertImageContentType(contentType);
+  if (!response.body) {
+    throw new Error("Artwork response has no body");
+  }
+  const data = await toBytes(response.body, maxObjectBytes);
+  assertObjectSize(data, maxObjectBytes);
+  return {
+    contentType: normalizeContentType(contentType),
+    data,
+    etag: safeHeader(response.etag),
+    lastModified: safeHeader(response.lastModified),
+  };
+};
+
+const assertStoredRowSafe = (row: ArtworkRow): void => {
+  const metadata = [
+    row.key,
+    row.account_id,
+    row.server_id,
+    row.source,
+    row.variant,
+    row.object_name,
+    row.content_type,
+    row.etag,
+    row.last_modified,
+  ];
+  if (
+    metadata.some(
+      (value) =>
+        value !== null &&
+        (hasControlCharacters(value) || containsTokenMaterial(value))
+    )
+  ) {
+    throw new Error("Artwork metadata contains unsafe token material");
+  }
+  if (!/^[a-f0-9]{64}\.bin$/u.test(row.object_name)) {
+    throw new Error("Artwork metadata contains an invalid object name");
+  }
+  assertImageContentType(row.content_type);
+  try {
+    canonicalVariant(parseVariantRecord(row.variant));
+  } catch {
+    throw new Error(INVALID_VARIANT_ERROR);
+  }
+};
+
+const getResponseHeader = (
+  response: ArtworkFetchResponse | Response,
+  name: string
+): string | undefined => {
+  if (response instanceof Response) {
+    return safeHeader(response.headers.get(name));
+  }
+  return safeHeader(name === "etag" ? response.etag : response.lastModified);
+};
+
+const toPublicEntry = (stored: StoredArtwork): ArtworkCacheEntry => {
+  let variant: ArtworkVariant;
+  try {
+    variant = canonicalVariant(parseVariantRecord(stored.row.variant));
+  } catch {
+    throw new Error(INVALID_VARIANT_ERROR);
+  }
+  return {
+    contentType: stored.row.content_type,
+    data: new Uint8Array(stored.data),
+    etag: stored.row.etag ?? undefined,
+    fetchedAt: stored.row.fetched_at,
+    key: stored.row.key,
+    lastAccessedAt: stored.row.last_accessed_at,
+    lastModified: stored.row.last_modified ?? undefined,
+    namespace: {
+      accountId: stored.row.account_id,
+      serverId: stored.row.server_id,
+    },
+    source: stored.row.source,
+    validatedAt: stored.row.validated_at,
+    variant,
+  };
+};
+
+const removeIfPresent = async (filePath: string): Promise<void> => {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if (
+      !(error instanceof Error && "code" in error && error.code === "ENOENT")
+    ) {
+      throw error;
+    }
+  }
+};
+
 export class ArtworkCache {
   private readonly objectsDirectory: string;
   private readonly database: Database;
@@ -124,28 +603,39 @@ export class ArtworkCache {
   private closed = false;
 
   constructor(rootDirectory: string, options: ArtworkCacheOptions = {}) {
-    if (!rootDirectory.trim()) throw new Error("Artwork cache root directory is required");
+    if (!rootDirectory.trim()) {
+      throw new Error("Artwork cache root directory is required");
+    }
     mkdirSync(rootDirectory, { recursive: true });
-    this.objectsDirectory = join(rootDirectory, OBJECTS_DIRECTORY);
+    this.objectsDirectory = path.join(rootDirectory, OBJECTS_DIRECTORY);
     this.memoryMaxEntries = positiveInteger(
       options.memoryMaxEntries ?? DEFAULT_MEMORY_MAX_ENTRIES,
-      "memoryMaxEntries",
+      "memoryMaxEntries"
     );
-    this.maxEntries = positiveInteger(options.maxEntries ?? DEFAULT_MAX_ENTRIES, "maxEntries");
-    this.maxBytes = positiveInteger(options.maxBytes ?? DEFAULT_MAX_BYTES, "maxBytes");
+    this.maxEntries = positiveInteger(
+      options.maxEntries ?? DEFAULT_MAX_ENTRIES,
+      "maxEntries"
+    );
+    this.maxBytes = positiveInteger(
+      options.maxBytes ?? DEFAULT_MAX_BYTES,
+      "maxBytes"
+    );
     this.maxObjectBytes = positiveInteger(
       options.maxObjectBytes ?? DEFAULT_MAX_OBJECT_BYTES,
-      "maxObjectBytes",
+      "maxObjectBytes"
     );
-    this.freshTtlMs = nonNegativeNumber(options.freshTtlMs ?? DEFAULT_FRESH_TTL_MS, "freshTtlMs");
+    this.freshTtlMs = nonNegativeNumber(
+      options.freshTtlMs ?? DEFAULT_FRESH_TTL_MS,
+      "freshTtlMs"
+    );
     this.staleWhileRevalidateMs = nonNegativeNumber(
       options.staleWhileRevalidateMs ?? DEFAULT_STALE_WHILE_REVALIDATE_MS,
-      "staleWhileRevalidateMs",
+      "staleWhileRevalidateMs"
     );
     this.now = options.now ?? Date.now;
     this.defaultFetcher = options.fetcher;
 
-    this.database = new Database(join(rootDirectory, DATABASE_FILENAME));
+    this.database = new Database(path.join(rootDirectory, DATABASE_FILENAME));
     this.database.run(`
       CREATE TABLE IF NOT EXISTS artwork (
         key TEXT PRIMARY KEY NOT NULL,
@@ -165,12 +655,14 @@ export class ArtworkCache {
       )
     `);
     this.database.run(
-      "CREATE INDEX IF NOT EXISTS artwork_namespace_access ON artwork(account_id, server_id, last_accessed_at)",
+      "CREATE INDEX IF NOT EXISTS artwork_namespace_access ON artwork(account_id, server_id, last_accessed_at)"
     );
-    this.database.run("CREATE INDEX IF NOT EXISTS artwork_access ON artwork(last_accessed_at)");
+    this.database.run(
+      "CREATE INDEX IF NOT EXISTS artwork_access ON artwork(last_accessed_at)"
+    );
     try {
       this.database.run(
-        "ALTER TABLE artwork ADD COLUMN access_sequence INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE artwork ADD COLUMN access_sequence INTEGER NOT NULL DEFAULT 0"
       );
     } catch {
       // Existing databases already have the logical access sequence.
@@ -179,7 +671,7 @@ export class ArtworkCache {
     this.accessSequence =
       this.database
         .query<{ maximum: number | null }, []>(
-          "SELECT MAX(access_sequence) AS maximum FROM artwork",
+          "SELECT MAX(access_sequence) AS maximum FROM artwork"
         )
         .get()?.maximum ?? 0;
 
@@ -193,7 +685,9 @@ export class ArtworkCache {
     try {
       await this.ensureReady();
       const stored = await this.readStored(normalized);
-      if (!stored) return null;
+      if (!stored) {
+        return null;
+      }
       this.assertCurrentEpoch(normalized, lease.generation);
       return this.touchAndReturn(normalized, stored);
     } finally {
@@ -209,7 +703,7 @@ export class ArtworkCache {
    */
   async getOrFetch(
     request: ArtworkRequest,
-    fetcher: ArtworkFetcher = this.defaultFetcher as ArtworkFetcher,
+    fetcher: ArtworkFetcher | undefined = this.defaultFetcher
   ): Promise<ArtworkCacheEntry> {
     const normalized = normalizeRequest(request);
     const lease = this.acquireNamespace(normalized.namespace);
@@ -222,38 +716,60 @@ export class ArtworkCache {
       if (existing) {
         const entry = this.touchAndReturn(normalized, existing);
         const age = Math.max(0, this.now() - entry.validatedAt);
-        if (age <= this.freshTtlMs) return entry;
+        if (age <= this.freshTtlMs) {
+          return entry;
+        }
         if (age <= this.freshTtlMs + this.staleWhileRevalidateMs) {
           if (fetcher) {
-            void this.fetchAndStore(normalized, fetcher, existing, requestEpoch).catch(
-              () => undefined,
+            void this.refreshInBackground(
+              normalized,
+              fetcher,
+              existing,
+              requestEpoch
             );
           }
           return entry;
         }
-        if (!fetcher) return entry;
+        if (!fetcher) {
+          return entry;
+        }
         try {
-          return await this.fetchAndStore(normalized, fetcher, existing, requestEpoch);
+          return await this.fetchAndStore(
+            normalized,
+            fetcher,
+            existing,
+            requestEpoch
+          );
         } catch {
           this.assertCurrentEpoch(normalized, requestEpoch);
           return entry;
         }
       }
 
-      if (!fetcher) throw new Error("No artwork fetcher was supplied");
-      return this.fetchAndStore(normalized, fetcher, undefined, requestEpoch);
+      if (!fetcher) {
+        throw new Error("No artwork fetcher was supplied");
+      }
+      return await this.fetchAndStore(
+        normalized,
+        fetcher,
+        undefined,
+        requestEpoch
+      );
     } finally {
       lease.release();
     }
   }
 
   /** Validate and atomically persist a fetched image. Useful for tests and custom fetchers. */
-  async put(request: ArtworkRequest, response: ArtworkFetchResponse): Promise<ArtworkCacheEntry> {
+  async put(
+    request: ArtworkRequest,
+    response: ArtworkFetchResponse
+  ): Promise<ArtworkCacheEntry> {
     const normalized = normalizeRequest(request);
     const lease = this.acquireNamespace(normalized.namespace);
     try {
       await this.ensureReady();
-      return this.persistResponse(normalized, response, lease.generation);
+      return await this.persistResponse(normalized, response, lease.generation);
     } finally {
       lease.release();
     }
@@ -264,27 +780,29 @@ export class ArtworkCache {
     const normalized = normalizeNamespace(namespace);
     const namespaceKey = getNamespaceKey(normalized);
     const lifecycle = this.getNamespaceLifecycle(namespaceKey);
-    if (lifecycle.clearPromise) return lifecycle.clearPromise;
+    if (lifecycle.clearPromise) {
+      await lifecycle.clearPromise;
+      return;
+    }
 
-    let clearPromise!: Promise<void>;
-    clearPromise = (async () => {
+    const clearPromise = (async () => {
       lifecycle.clearing = true;
       lifecycle.generation += 1;
       try {
-        await this.waitForNamespaceIdle(lifecycle);
+        await ArtworkCache.waitForNamespaceIdle(lifecycle);
         await this.ensureReady();
         this.assertUsable();
         await this.withMutationLock(async () => {
           this.assertUsable();
           const rows = this.database
             .query<Pick<ArtworkRow, "key" | "object_name">, [string, string]>(
-              "SELECT key, object_name FROM artwork WHERE account_id = ? AND server_id = ?",
+              "SELECT key, object_name FROM artwork WHERE account_id = ? AND server_id = ?"
             )
             .all(normalized.accountId, normalized.serverId);
-          this.database.run("DELETE FROM artwork WHERE account_id = ? AND server_id = ?", [
-            normalized.accountId,
-            normalized.serverId,
-          ]);
+          this.database.run(
+            "DELETE FROM artwork WHERE account_id = ? AND server_id = ?",
+            [normalized.accountId, normalized.serverId]
+          );
           for (const [key, stored] of this.memory) {
             if (
               stored.row.account_id === normalized.accountId &&
@@ -294,27 +812,36 @@ export class ArtworkCache {
             }
           }
           await Promise.all(
-            rows.map((row) => removeIfPresent(join(this.objectsDirectory, row.object_name))),
+            rows.map(async (row) => {
+              await removeIfPresent(
+                path.join(this.objectsDirectory, row.object_name)
+              );
+              return true;
+            })
           );
         });
       } finally {
         lifecycle.clearing = false;
-        if (lifecycle.clearPromise === clearPromise) lifecycle.clearPromise = undefined;
+        lifecycle.clearPromise = null;
       }
     })();
     lifecycle.clearPromise = clearPromise;
-    return clearPromise;
+    await clearPromise;
   }
 
   /** Remove temporary writes and object files no longer referenced by SQLite. */
   async cleanup(): Promise<void> {
     await this.ensureReady();
-    await this.withMutationLock(() => this.cleanupOrphans());
+    await this.withMutationLock(async () => {
+      await this.cleanupOrphans();
+    });
   }
 
   /** Close SQLite and release this cache's resources. */
   dispose(): void {
-    if (this.disposed) return;
+    if (this.disposed) {
+      return;
+    }
     this.disposed = true;
     this.memory.clear();
     this.closePromise ??= this.closeWhenReady();
@@ -330,15 +857,28 @@ export class ArtworkCache {
     this.dispose();
   }
 
-  [Symbol.asyncDispose](): Promise<void> {
-    return this.disposeAsync();
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.disposeAsync();
+  }
+
+  private async refreshInBackground(
+    request: NormalizedRequest,
+    fetcher: ArtworkFetcher,
+    existing: StoredArtwork,
+    expectedEpoch: number
+  ): Promise<void> {
+    try {
+      await this.fetchAndStore(request, fetcher, existing, expectedEpoch);
+    } catch {
+      // Background refresh failures are intentionally ignored.
+    }
   }
 
   private async fetchAndStore(
     request: NormalizedRequest,
     fetcher: ArtworkFetcher,
     existing?: StoredArtwork,
-    expectedEpoch?: number,
+    expectedEpoch?: number
   ): Promise<ArtworkCacheEntry> {
     const lease = this.acquireNamespace(request.namespace);
     try {
@@ -348,86 +888,115 @@ export class ArtworkCache {
       }
       const current = this.inFlight.get(request.key);
       if (current && current.epoch === epoch) {
-        return current.promise.finally(lease.release);
+        try {
+          return await current.promise;
+        } finally {
+          lease.release();
+        }
       }
-      if (current) this.inFlight.delete(request.key);
+      if (current) {
+        this.inFlight.delete(request.key);
+      }
 
       const fetchRequest: ArtworkFetchRequest = {
         source: request.source,
         variant: request.variant,
-        ...(existing?.row.etag ? { etag: existing.row.etag } : {}),
-        ...(existing?.row.last_modified ? { lastModified: existing.row.last_modified } : {}),
       };
-      let resolvePromise!: (entry: ArtworkCacheEntry) => void;
-      let rejectPromise!: (error: unknown) => void;
-      const promise = new Promise<ArtworkCacheEntry>((resolve, reject) => {
-        resolvePromise = resolve;
-        rejectPromise = reject;
-      });
-      const flight: InFlightArtwork = {
-        promise,
-        namespaceKey: getNamespaceKey(request.namespace),
-        epoch,
-      };
-      this.inFlight.set(request.key, flight);
-      void (async () => {
+      const etag = existing?.row.etag;
+      if (etag !== undefined && etag !== null && etag !== "") {
+        fetchRequest.etag = etag;
+      }
+      const lastModified = existing?.row.last_modified;
+      if (
+        lastModified !== undefined &&
+        lastModified !== null &&
+        lastModified !== ""
+      ) {
+        fetchRequest.lastModified = lastModified;
+      }
+      const promise = (async () => {
         try {
           const response = await fetcher(fetchRequest);
           this.assertCurrentEpoch(request, epoch);
           if (isNotModified(response)) {
-            if (!existing) throw new Error("Artwork fetch returned 304 without a cached object");
-            resolvePromise(await this.refreshNotModified(request, existing, response, epoch));
-          } else {
-            resolvePromise(await this.persistResponse(request, response, epoch));
+            if (!existing) {
+              throw new Error(
+                "Artwork fetch returned 304 without a cached object"
+              );
+            }
+            return await this.refreshNotModified(
+              request,
+              existing,
+              response,
+              epoch
+            );
           }
-        } catch (error) {
-          rejectPromise(error);
+          return await this.persistResponse(request, response, epoch);
         } finally {
-          this.clearInFlight(request.key, promise);
+          this.clearInFlight(request.key, epoch);
         }
       })();
-      return promise.finally(lease.release);
+      const flight: InFlightArtwork = {
+        epoch,
+        namespaceKey: getNamespaceKey(request.namespace),
+        promise,
+      };
+      this.inFlight.set(request.key, flight);
+      try {
+        return await promise;
+      } finally {
+        lease.release();
+      }
     } catch (error) {
       lease.release();
       throw error;
     }
   }
 
-  private clearInFlight(key: string, promise: Promise<ArtworkCacheEntry>): void {
-    if (this.inFlight.get(key)?.promise === promise) this.inFlight.delete(key);
+  private clearInFlight(key: string, epoch: number): void {
+    if (this.inFlight.get(key)?.epoch === epoch) {
+      this.inFlight.delete(key);
+    }
   }
 
   private async persistResponse(
     request: NormalizedRequest,
     response: ArtworkFetchResponse | Response,
-    epoch: number,
+    epoch: number
   ): Promise<ArtworkCacheEntry> {
     this.assertUsable();
     this.assertCurrentEpoch(request, epoch);
-    const normalizedResponse = await normalizeResponse(response, this.maxObjectBytes);
-    return this.withMutationLock(async () => {
+    const normalizedResponse = await normalizeResponse(
+      response,
+      this.maxObjectBytes
+    );
+    return await this.withMutationLock(async () => {
       this.assertUsable();
       this.assertCurrentEpoch(request, epoch);
       const now = this.now();
+      this.accessSequence += 1;
       const row: ArtworkRow = {
-        key: request.key,
+        access_sequence: this.accessSequence,
         account_id: request.namespace.accountId,
-        server_id: request.namespace.serverId,
-        source: request.source,
-        variant: JSON.stringify(request.variant),
-        object_name: request.objectName,
         byte_size: normalizedResponse.data.byteLength,
         content_type: normalizedResponse.contentType,
         etag: normalizedResponse.etag ?? null,
-        last_modified: normalizedResponse.lastModified ?? null,
         fetched_at: now,
-        validated_at: now,
+        key: request.key,
         last_accessed_at: now,
-        access_sequence: ++this.accessSequence,
+        last_modified: normalizedResponse.lastModified ?? null,
+        object_name: request.objectName,
+        server_id: request.namespace.serverId,
+        source: request.source,
+        validated_at: now,
+        variant: JSON.stringify(request.variant),
       };
       let committed = false;
       try {
-        await this.writeObjectAtomically(request.objectName, normalizedResponse.data);
+        await this.writeObjectAtomically(
+          request.objectName,
+          normalizedResponse.data
+        );
         this.assertCurrentEpoch(request, epoch);
         this.assertUsable();
         this.database.run(
@@ -451,19 +1020,21 @@ export class ArtworkCache {
             row.validated_at,
             row.last_accessed_at,
             row.access_sequence,
-          ],
+          ]
         );
         committed = true;
-        this.remember({ row, data: normalizedResponse.data });
+        this.remember({ data: normalizedResponse.data, row });
         await this.evictIfNeeded();
         this.assertCurrentEpoch(request, epoch);
-        return toPublicEntry({ row, data: normalizedResponse.data });
+        return toPublicEntry({ data: normalizedResponse.data, row });
       } catch (error) {
         if (committed) {
-          this.database.run("DELETE FROM artwork WHERE key = ?", [request.key]);
+          this.database.run(DELETE_ARTWORK_SQL, [request.key]);
           this.memory.delete(request.key);
         }
-        await removeIfPresent(join(this.objectsDirectory, request.objectName));
+        await removeIfPresent(
+          path.join(this.objectsDirectory, request.objectName)
+        );
         throw error;
       }
     });
@@ -473,36 +1044,40 @@ export class ArtworkCache {
     request: NormalizedRequest,
     existing: StoredArtwork,
     response: ArtworkFetchResponse | Response,
-    epoch: number,
+    epoch: number
   ): Promise<ArtworkCacheEntry> {
-    return this.withMutationLock(async () => {
+    return await this.withMutationLock(() => {
       this.assertUsable();
       this.assertCurrentEpoch(request, epoch);
       const now = this.now();
       const etag = getResponseHeader(response, "etag") ?? existing.row.etag;
       const lastModified =
-        getResponseHeader(response, "last-modified") ?? existing.row.last_modified;
-      const accessSequence = ++this.accessSequence;
+        getResponseHeader(response, "last-modified") ??
+        existing.row.last_modified;
+      this.accessSequence += 1;
+      const { accessSequence } = this;
       this.database.run(
         "UPDATE artwork SET validated_at = ?, last_accessed_at = ?, access_sequence = ?, etag = ?, last_modified = ? WHERE key = ?",
-        [now, now, accessSequence, etag, lastModified, request.key],
+        [now, now, accessSequence, etag, lastModified, request.key]
       );
       const row: ArtworkRow = {
         ...existing.row,
+        access_sequence: accessSequence,
         etag: etag ?? null,
+        last_accessed_at: now,
         last_modified: lastModified ?? null,
         validated_at: now,
-        last_accessed_at: now,
-        access_sequence: accessSequence,
       };
-      const stored = { row, data: existing.data };
+      const stored = { data: existing.data, row };
       this.remember(stored);
       this.assertCurrentEpoch(request, epoch);
       return toPublicEntry(stored);
     });
   }
 
-  private async readStored(request: NormalizedRequest): Promise<StoredArtwork | null> {
+  private async readStored(
+    request: NormalizedRequest
+  ): Promise<StoredArtwork | null> {
     this.assertUsable();
     const memory = this.memory.get(request.key);
     if (memory) {
@@ -513,27 +1088,36 @@ export class ArtworkCache {
     const row = this.database
       .query<ArtworkRow, [string]>("SELECT * FROM artwork WHERE key = ?")
       .get(request.key);
-    if (!row) return null;
-    const objectPath = join(this.objectsDirectory, row.object_name);
+    if (!row) {
+      return null;
+    }
+    const objectPath = path.join(this.objectsDirectory, row.object_name);
     try {
       assertStoredRowSafe(row);
       const data = new Uint8Array(await readFile(objectPath));
       this.assertUsable();
-      if (data.byteLength !== row.byte_size || data.byteLength > this.maxObjectBytes) {
+      if (
+        data.byteLength !== row.byte_size ||
+        data.byteLength > this.maxObjectBytes
+      ) {
         throw new Error("Artwork object size does not match metadata");
       }
-      const stored = { row, data };
+      const stored = { data, row };
       this.remember(stored);
       return stored;
     } catch (error) {
-      if (this.disposed) throw error;
+      if (this.disposed) {
+        throw error;
+      }
       await this.withMutationLock(async () => {
         const current = this.database
           .query<Pick<ArtworkRow, "object_name">, [string]>(
-            "SELECT object_name FROM artwork WHERE key = ?",
+            "SELECT object_name FROM artwork WHERE key = ?"
           )
           .get(request.key);
-        if (current?.object_name !== row.object_name) return;
+        if (current?.object_name !== row.object_name) {
+          return;
+        }
         this.database.run("DELETE FROM artwork WHERE key = ?", [request.key]);
         await removeIfPresent(objectPath);
       });
@@ -541,15 +1125,23 @@ export class ArtworkCache {
     }
   }
 
-  private touchAndReturn(request: NormalizedRequest, stored: StoredArtwork): ArtworkCacheEntry {
+  private touchAndReturn(
+    request: NormalizedRequest,
+    stored: StoredArtwork
+  ): ArtworkCacheEntry {
     this.assertUsable();
     const now = this.now();
-    const accessSequence = ++this.accessSequence;
+    this.accessSequence += 1;
+    const { accessSequence } = this;
     this.database.run(
       "UPDATE artwork SET last_accessed_at = ?, access_sequence = ? WHERE key = ?",
-      [now, accessSequence, request.key],
+      [now, accessSequence, request.key]
     );
-    stored.row = { ...stored.row, last_accessed_at: now, access_sequence: accessSequence };
+    stored.row = {
+      ...stored.row,
+      access_sequence: accessSequence,
+      last_accessed_at: now,
+    };
     this.remember(stored);
     return toPublicEntry(stored);
   }
@@ -559,39 +1151,55 @@ export class ArtworkCache {
     this.memory.set(stored.row.key, stored);
     while (this.memory.size > this.memoryMaxEntries) {
       const oldest = this.memory.keys().next().value;
-      if (oldest === undefined) break;
+      if (oldest === undefined) {
+        break;
+      }
       this.memory.delete(oldest);
     }
   }
 
   private async evictIfNeeded(): Promise<void> {
-    while (true) {
+    const removals: Promise<void>[] = [];
+    let shouldEvict = true;
+    while (shouldEvict) {
       this.assertUsable();
       const totals = this.database
         .query<{ count: number; bytes: number }, []>(
-          "SELECT COUNT(*) AS count, COALESCE(SUM(byte_size), 0) AS bytes FROM artwork",
+          "SELECT COUNT(*) AS count, COALESCE(SUM(byte_size), 0) AS bytes FROM artwork"
         )
         .get();
-      if (!totals || (totals.count <= this.maxEntries && totals.bytes <= this.maxBytes)) return;
-      const oldest = this.database
-        .query<Pick<ArtworkRow, "key" | "object_name">, []>(
-          "SELECT key, object_name FROM artwork ORDER BY access_sequence ASC, fetched_at ASC, key ASC LIMIT 1",
-        )
-        .get();
-      if (!oldest) return;
-      this.database.run("DELETE FROM artwork WHERE key = ?", [oldest.key]);
-      this.memory.delete(oldest.key);
-      await removeIfPresent(join(this.objectsDirectory, oldest.object_name));
+      const withinLimits =
+        !totals ||
+        (totals.count <= this.maxEntries && totals.bytes <= this.maxBytes);
+      const oldest = withinLimits
+        ? null
+        : this.database
+            .query<Pick<ArtworkRow, "key" | "object_name">, []>(
+              "SELECT key, object_name FROM artwork ORDER BY access_sequence ASC, fetched_at ASC, key ASC LIMIT 1"
+            )
+            .get();
+      if (withinLimits || !oldest) {
+        shouldEvict = false;
+      } else {
+        this.database.run(DELETE_ARTWORK_SQL, [oldest.key]);
+        this.memory.delete(oldest.key);
+        removals.push(
+          removeIfPresent(path.join(this.objectsDirectory, oldest.object_name))
+        );
+      }
     }
+    await Promise.all(removals);
   }
 
   private removeUnsafeMetadata(): void {
-    const rows = this.database.query<ArtworkRow, []>("SELECT * FROM artwork").all();
+    const rows = this.database
+      .query<ArtworkRow, []>("SELECT * FROM artwork")
+      .all();
     for (const row of rows) {
       try {
         assertStoredRowSafe(row);
       } catch {
-        this.database.run("DELETE FROM artwork WHERE key = ?", [row.key]);
+        this.database.run(DELETE_ARTWORK_SQL, [row.key]);
       }
     }
   }
@@ -599,15 +1207,19 @@ export class ArtworkCache {
   private async prepareDirectoriesAndCleanup(): Promise<void> {
     await mkdir(this.objectsDirectory, { recursive: true });
     this.assertUsable();
-    await this.withMutationLock(() => this.cleanupOrphans());
+    await this.withMutationLock(async () => {
+      await this.cleanupOrphans();
+    });
   }
 
   private async cleanupOrphans(): Promise<void> {
     const referenced = new Set(
       this.database
-        .query<Pick<ArtworkRow, "object_name">, []>("SELECT object_name FROM artwork")
+        .query<Pick<ArtworkRow, "object_name">, []>(
+          "SELECT object_name FROM artwork"
+        )
         .all()
-        .map((row) => row.object_name),
+        .map((row) => row.object_name)
     );
     let files: string[] = [];
     try {
@@ -617,18 +1229,24 @@ export class ArtworkCache {
     }
     const removals: Promise<void>[] = [];
     for (const file of files) {
-      if (file.endsWith(".tmp") || (file.endsWith(".bin") && !referenced.has(file))) {
-        removals.push(removeIfPresent(join(this.objectsDirectory, file)));
+      if (
+        file.endsWith(".tmp") ||
+        (file.endsWith(".bin") && !referenced.has(file))
+      ) {
+        removals.push(removeIfPresent(path.join(this.objectsDirectory, file)));
       }
     }
     await Promise.all(removals);
   }
 
-  private async writeObjectAtomically(objectName: string, data: Uint8Array): Promise<void> {
+  private async writeObjectAtomically(
+    objectName: string,
+    data: Uint8Array
+  ): Promise<void> {
     await mkdir(this.objectsDirectory, { recursive: true });
     const temporaryName = `${objectName}.${randomUUID()}.tmp`;
-    const temporaryPath = join(this.objectsDirectory, temporaryName);
-    const objectPath = join(this.objectsDirectory, objectName);
+    const temporaryPath = path.join(this.objectsDirectory, temporaryName);
+    const objectPath = path.join(this.objectsDirectory, objectName);
     try {
       await writeFile(temporaryPath, data);
       await rename(temporaryPath, objectPath);
@@ -638,26 +1256,34 @@ export class ArtworkCache {
     }
   }
 
-  private async withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+  private async withMutationLock<T>(
+    operation: () => Promise<T> | T
+  ): Promise<T> {
     const previous = this.mutationTail;
-    let release!: () => void;
-    this.mutationTail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const { promise, resolve } = Promise.withResolvers<undefined>();
+    this.mutationTail = promise;
     await previous;
     try {
       return await operation();
     } finally {
-      release();
+      resolve();
     }
   }
 
-  private getNamespaceLifecycle(namespaceOrKey: ArtworkNamespace | string): NamespaceLifecycle {
-    const key =
-      typeof namespaceOrKey === "string" ? namespaceOrKey : getNamespaceKey(namespaceOrKey);
+  private getNamespaceLifecycle(
+    namespaceOrKey: ArtworkNamespace | string
+  ): NamespaceLifecycle {
+    const key = isString(namespaceOrKey)
+      ? namespaceOrKey
+      : getNamespaceKey(namespaceOrKey);
     let lifecycle = this.namespaceLifecycles.get(key);
     if (!lifecycle) {
-      lifecycle = { generation: 0, active: 0, clearing: false, idleResolvers: [] };
+      lifecycle = {
+        active: 0,
+        clearing: false,
+        generation: 0,
+        idleResolvers: [],
+      };
       this.namespaceLifecycles.set(key, lifecycle);
     }
     return lifecycle;
@@ -665,31 +1291,46 @@ export class ArtworkCache {
 
   private acquireNamespace(namespace: ArtworkNamespace): NamespaceLease {
     const lifecycle = this.getNamespaceLifecycle(namespace);
-    if (lifecycle.clearing) throw new Error("Artwork namespace is being cleared");
+    if (lifecycle.clearing) {
+      throw new Error("Artwork namespace is being cleared");
+    }
     lifecycle.active += 1;
     let released = false;
     return {
       generation: lifecycle.generation,
       release: () => {
-        if (released) return;
+        if (released) {
+          return;
+        }
         released = true;
         lifecycle.active -= 1;
         if (lifecycle.active === 0) {
           const resolvers = lifecycle.idleResolvers.splice(0);
-          for (const resolve of resolvers) resolve();
+          for (const resolve of resolvers) {
+            resolve();
+          }
         }
       },
     };
   }
 
-  private async waitForNamespaceIdle(lifecycle: NamespaceLifecycle): Promise<void> {
-    if (lifecycle.active === 0) return;
-    await new Promise<void>((resolve) => lifecycle.idleResolvers.push(resolve));
+  private static async waitForNamespaceIdle(
+    lifecycle: NamespaceLifecycle
+  ): Promise<void> {
+    if (lifecycle.active === 0) {
+      return;
+    }
+    const { promise, resolve } = Promise.withResolvers<undefined>();
+    lifecycle.idleResolvers.push(() => {
+      resolve();
+    });
+    await promise;
   }
 
   private namespaceEpoch(requestOrKey: NormalizedRequest | string): number {
-    const key =
-      typeof requestOrKey === "string" ? requestOrKey : getNamespaceKey(requestOrKey.namespace);
+    const key = isString(requestOrKey)
+      ? requestOrKey
+      : getNamespaceKey(requestOrKey.namespace);
     return this.getNamespaceLifecycle(key).generation;
   }
 
@@ -705,9 +1346,16 @@ export class ArtworkCache {
     } catch {
       // Initialization is intentionally fenced by disposal.
     }
-    while (this.inFlight.size > 0) {
-      await Promise.allSettled([...this.inFlight.values()].map((flight) => flight.promise));
-    }
+    const waitForInFlight = async (): Promise<void> => {
+      if (this.inFlight.size === 0) {
+        return;
+      }
+      await Promise.allSettled(
+        [...this.inFlight.values()].map(async (flight) => await flight.promise)
+      );
+      await waitForInFlight();
+    };
+    await waitForInFlight();
     if (!this.closed) {
       this.closed = true;
       this.database.close();
@@ -721,366 +1369,8 @@ export class ArtworkCache {
   }
 
   private assertUsable(): void {
-    if (this.disposed) throw new Error("Artwork cache has been disposed");
-  }
-}
-
-function positiveInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value < 1)
-    throw new Error(`${name} must be a positive integer`);
-  return value;
-}
-
-function nonNegativeNumber(value: number, name: string): number {
-  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be non-negative`);
-  return value;
-}
-
-function getNamespaceKey(namespace: ArtworkNamespace): string {
-  return `${namespace.accountId}\u0000${namespace.serverId}`;
-}
-
-function normalizeNamespace(namespace: ArtworkNamespace): ArtworkNamespace {
-  if (!namespace || typeof namespace !== "object") {
-    throw new Error("Artwork namespace is required");
-  }
-  const accountId = normalizeIdentity(namespace.accountId, "accountId");
-  const serverId = normalizeIdentity(namespace.serverId, "serverId");
-  return { accountId, serverId };
-}
-
-function normalizeIdentity(value: string, name: string): string {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} is required`);
-  const normalized = value.trim();
-  if (containsTokenMaterial(normalized) || hasControlCharacters(normalized)) {
-    throw new Error(`${name} must be a non-secret identifier`);
-  }
-  return normalized;
-}
-
-function normalizeRequest(request: ArtworkRequest): NormalizedRequest {
-  const namespace = normalizeNamespace(request.namespace);
-  const source = canonicalSource(request.source);
-  const variant = canonicalVariant(request.variant === undefined ? {} : request.variant);
-  const canonicalKey = [
-    namespace.accountId,
-    namespace.serverId,
-    source,
-    serializeVariant(variant),
-  ].join("\u0000");
-  const key = createHash("sha256").update(canonicalKey).digest("hex");
-  return { key, namespace, source, variant, objectName: `${key}.bin` };
-}
-
-function canonicalSource(source: string): string {
-  if (typeof source !== "string" || !source.trim()) throw new Error("Artwork source is required");
-  const input = source.trim();
-  if (containsTokenMaterial(input) || TOKEN_PARAMETER.test(input)) {
-    throw new Error("Artwork source must not contain a Plex token");
-  }
-  if (/^https?:\/\//i.test(input)) {
-    let url: URL;
-    try {
-      url = new URL(input);
-    } catch {
-      throw new Error("Artwork source is invalid");
-    }
-    assertSafeSourceQuery(url);
-    if (url.username || url.password)
-      throw new Error("Artwork source must not contain credentials");
-    url.hash = "";
-    url.searchParams.sort();
-    return url.toString();
-  }
-  if (hasControlCharacters(input) || input.startsWith("//")) {
-    throw new Error("Artwork source is invalid");
-  }
-  const relative = new URL(input, "https://artwork.invalid");
-  assertSafeSourceQuery(relative);
-  relative.hash = "";
-  relative.searchParams.sort();
-  return `${relative.pathname}${relative.search}`;
-}
-
-function assertSafeSourceQuery(url: URL): void {
-  for (const [name, value] of url.searchParams) {
-    if (containsTokenMaterial(name) || containsTokenMaterial(value)) {
-      throw new Error("Artwork source must not contain a Plex token");
+    if (this.disposed) {
+      throw new Error("Artwork cache has been disposed");
     }
   }
 }
-
-function canonicalVariant(variant: ArtworkVariant): ArtworkVariant {
-  if (!variant || typeof variant !== "object" || Array.isArray(variant)) {
-    throw new Error("Artwork variant must be an object");
-  }
-  const keys = Object.keys(variant).sort();
-  const normalized = Object.create(null) as Record<string, ArtworkVariantValue>;
-  for (const key of keys) {
-    if (!key || containsTokenMaterial(key))
-      throw new Error("Artwork variant must not contain a token");
-    const value = variant[key];
-    if (
-      typeof value !== "string" &&
-      typeof value !== "number" &&
-      typeof value !== "boolean" &&
-      value !== null
-    ) {
-      throw new Error(`Artwork variant value for ${key} is not serialisable`);
-    }
-    if (typeof value === "number" && !Number.isFinite(value)) {
-      throw new Error(`Artwork variant value for ${key} must be finite`);
-    }
-    if (typeof value === "string" && containsTokenMaterial(value)) {
-      throw new Error("Artwork variant must not contain a token");
-    }
-    normalized[key] = value;
-  }
-  return normalized;
-}
-
-function serializeVariant(variant: ArtworkVariant): string {
-  return JSON.stringify(
-    Object.keys(variant)
-      .sort()
-      .map((key) => [key, variant[key]]),
-  );
-}
-
-function isNotModified(response: ArtworkFetchResponse | Response): boolean {
-  return response instanceof Response
-    ? response.status === 304
-    : response.notModified === true || response.status === 304;
-}
-
-async function normalizeResponse(
-  response: ArtworkFetchResponse | Response,
-  maxObjectBytes: number,
-): Promise<{
-  data: Uint8Array;
-  contentType: string;
-  etag?: string;
-  lastModified?: string;
-}> {
-  if (isNotModified(response)) throw new Error("304 requires an existing artwork object");
-  if (response instanceof Response) {
-    if (!response.ok) throw new Error(`Artwork request failed: ${response.status}`);
-    const contentType = response.headers.get("content-type") ?? "";
-    assertImageContentType(contentType);
-    const length = response.headers.get("content-length");
-    if (length && Number(length) > maxObjectBytes) {
-      throw new Error(`Artwork exceeds the ${maxObjectBytes}-byte limit`);
-    }
-    if (!response.body) throw new Error("Artwork response has no body");
-    const data = await toBytes(response.body, maxObjectBytes);
-    return {
-      data,
-      contentType: normalizeContentType(contentType),
-      etag: safeHeader(response.headers.get("etag")),
-      lastModified: safeHeader(response.headers.get("last-modified")),
-    };
-  }
-
-  const status = response.status ?? 200;
-  if (status < 200 || status >= 300) throw new Error(`Artwork request failed: ${status}`);
-  const contentType = response.contentType ?? "";
-  assertImageContentType(contentType);
-  if (!response.body) throw new Error("Artwork response has no body");
-  const data = await toBytes(response.body, maxObjectBytes);
-  assertObjectSize(data, maxObjectBytes);
-  return {
-    data,
-    contentType: normalizeContentType(contentType),
-    etag: safeHeader(response.etag),
-    lastModified: safeHeader(response.lastModified),
-  };
-}
-
-async function toBytes(
-  body: ArrayBuffer | Uint8Array | Blob | ReadableStream<Uint8Array>,
-  maxObjectBytes: number,
-): Promise<Uint8Array> {
-  if (body instanceof Uint8Array) {
-    assertObjectSize(body, maxObjectBytes);
-    if (body.byteLength === 0) throw new Error("Artwork response has an empty body");
-    return body.slice();
-  }
-  if (body instanceof ArrayBuffer) {
-    assertObjectSize(new Uint8Array(body), maxObjectBytes);
-    if (body.byteLength === 0) throw new Error("Artwork response has an empty body");
-    return new Uint8Array(body.slice(0));
-  }
-  if (body instanceof Blob) {
-    if (body.size > maxObjectBytes) {
-      throw new Error(`Artwork exceeds the ${maxObjectBytes}-byte limit`);
-    }
-    const data = new Uint8Array(await body.arrayBuffer());
-    if (data.byteLength === 0) throw new Error("Artwork response has an empty body");
-    return data;
-  }
-
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const result = await reader.read();
-      if (result.done) break;
-      const chunk = result.value;
-      total += chunk.byteLength;
-      if (total > maxObjectBytes) {
-        await reader.cancel();
-        throw new Error(`Artwork exceeds the ${maxObjectBytes}-byte limit`);
-      }
-      chunks.push(chunk);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  if (total === 0) throw new Error("Artwork response has an empty body");
-  const data = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    data.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return data;
-}
-
-function assertStoredRowSafe(row: ArtworkRow): void {
-  const metadata = [
-    row.key,
-    row.account_id,
-    row.server_id,
-    row.source,
-    row.variant,
-    row.object_name,
-    row.content_type,
-    row.etag,
-    row.last_modified,
-  ];
-  if (
-    metadata.some(
-      (value) => value !== null && (hasControlCharacters(value) || containsTokenMaterial(value)),
-    )
-  ) {
-    throw new Error("Artwork metadata contains unsafe token material");
-  }
-  if (!/^[a-f0-9]{64}\.bin$/.test(row.object_name)) {
-    throw new Error("Artwork metadata contains an invalid object name");
-  }
-  assertImageContentType(row.content_type);
-  let variant: unknown;
-  try {
-    variant = JSON.parse(row.variant);
-  } catch {
-    throw new Error("Artwork metadata contains an invalid variant");
-  }
-  canonicalVariant(variant as ArtworkVariant);
-}
-
-function assertImageContentType(contentType: string): void {
-  if (typeof contentType !== "string") {
-    throw new Error("Artwork response must have an image content type");
-  }
-  const mime = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (!IMAGE_MIME_TYPES.has(mime)) {
-    throw new Error("Artwork response must have an image content type");
-  }
-}
-
-function normalizeContentType(contentType: string): string {
-  assertImageContentType(contentType);
-  return contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-}
-
-function assertObjectSize(data: Uint8Array, maxObjectBytes: number): void {
-  if (data.byteLength > maxObjectBytes) {
-    throw new Error(`Artwork exceeds the ${maxObjectBytes}-byte limit`);
-  }
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
-}
-
-function containsTokenMaterial(value: string): boolean {
-  if (typeof value !== "string") return true;
-  let candidate = value;
-  for (let attempt = 0; attempt <= MAX_TOKEN_DECODE_DEPTH; attempt += 1) {
-    if (TOKEN_TEXT.test(candidate) || TOKEN_PARAMETER.test(candidate)) return true;
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(candidate);
-    } catch {
-      return true;
-    }
-    if (decoded === candidate) return false;
-    candidate = decoded;
-  }
-  return true;
-}
-
-function safeHeader(value: string | null | undefined): string | undefined {
-  if (!value) return undefined;
-  if (hasControlCharacters(value) || containsTokenMaterial(value)) {
-    throw new Error("Artwork response contains an unsafe validator");
-  }
-  return value;
-}
-
-function getResponseHeader(
-  response: ArtworkFetchResponse | Response,
-  name: string,
-): string | undefined {
-  if (response instanceof Response) return safeHeader(response.headers.get(name));
-  return safeHeader(name === "etag" ? response.etag : response.lastModified);
-}
-
-function toPublicEntry(stored: StoredArtwork): ArtworkCacheEntry {
-  let variant: ArtworkVariant;
-  try {
-    variant = JSON.parse(stored.row.variant) as ArtworkVariant;
-  } catch {
-    throw new Error("Artwork metadata contains an invalid variant");
-  }
-  return {
-    key: stored.row.key,
-    namespace: {
-      accountId: stored.row.account_id,
-      serverId: stored.row.server_id,
-    },
-    source: stored.row.source,
-    variant,
-    data: new Uint8Array(stored.data),
-    contentType: stored.row.content_type,
-    etag: stored.row.etag ?? undefined,
-    lastModified: stored.row.last_modified ?? undefined,
-    fetchedAt: stored.row.fetched_at,
-    validatedAt: stored.row.validated_at,
-    lastAccessedAt: stored.row.last_accessed_at,
-  };
-}
-
-async function removeIfPresent(path: string): Promise<void> {
-  try {
-    await unlink(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-}
-
-export type {
-  ArtworkCacheEntry,
-  ArtworkCacheOptions,
-  ArtworkFetchRequest,
-  ArtworkFetchResponse,
-  ArtworkFetcher,
-  ArtworkNamespace,
-  ArtworkRequest,
-  ArtworkVariant,
-};

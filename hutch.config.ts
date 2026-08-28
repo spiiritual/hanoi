@@ -5,9 +5,9 @@ export default {
   },
   packageManager: "npm",
   scripts: {
+    build: ["hutch", "electrobun", "build", "--env=stable"],
+    dev: ["hutch", "electrobun", "dev", "--watch"],
     install: ["hutch", "pm", "ci"],
     start: ["hutch", "electrobun", "dev"],
-    dev: ["hutch", "electrobun", "dev", "--watch"],
-    build: ["hutch", "electrobun", "build", "--env=stable"],
   },
 };

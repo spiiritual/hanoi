@@ -15,20 +15,35 @@
  */
 import { z } from "zod";
 
-/** Strict single-value parse: validated value, or null (mismatch logged). Never throws. */
-export function parseStrict<T>(schema: z.ZodType<T>, payload: unknown, context: string): T | null {
+/** Parsed JSON values accepted at the Plex response boundary. */
+export const parseStrict = <T>(
+  schema: z.ZodType<T>,
+  // This function is the parser boundary for untrusted Plex responses.
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Zod validates the payload here
+  payload: unknown,
+  context: string
+): T | null => {
   const result = schema.safeParse(payload);
-  if (result.success) return result.data;
-  console.error(`Plex response failed validation (${context}):`, result.error.issues);
+  if (result.success) {
+    return result.data;
+  }
+  console.error(
+    `Plex response failed validation (${context}):`,
+    result.error.issues
+  );
   return null;
-}
+};
 
 /**
  * Strict array validation: each item is validated individually; invalid
  * items are dropped (with the reason and the item logged), valid ones kept.
  * Never throws — one malformed item must not wipe a whole list.
  */
-export function filterItems<T>(schema: z.ZodType<T>, items: unknown[], context: string): T[] {
+export const filterItems = <T>(
+  schema: z.ZodType<T>,
+  items: unknown[],
+  context: string
+): T[] => {
   const valid: T[] = [];
   for (const item of items) {
     const result = schema.safeParse(item);
@@ -38,37 +53,51 @@ export function filterItems<T>(schema: z.ZodType<T>, items: unknown[], context: 
       console.error(
         `Plex item failed validation (${context}); dropped:`,
         result.error.issues,
-        item,
+        item
       );
     }
   }
   return valid;
-}
+};
 
 /**
  * Unwrap the top-level `MediaContainer` envelope. A missing/invalid envelope
  * is logged and yields `{}` so callers degrade to empty results.
  */
-export function container<T>(payload: unknown, context: string): { MediaContainer?: T } {
+interface MediaContainerEnvelope<T> {
+  MediaContainer?: T;
+}
+
+export const container = <T>(
+  // This function is the parser boundary for untrusted Plex responses.
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Zod validates the payload here
+  payload: unknown,
+  context: string
+): MediaContainerEnvelope<T> => {
   const parsed = parseStrict(
     z.object({ MediaContainer: z.record(z.string(), z.unknown()) }),
     payload,
-    context,
+    context
   );
-  if (!parsed) return {};
-  return parsed as { MediaContainer?: T };
-}
+  if (!parsed) {
+    return {};
+  }
+  // SAFETY: The envelope shape is validated here; callers supply T for the
+  // response-specific fields they read from Plex's loose object payload.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the validated envelope is intentionally generic
+  return parsed as MediaContainerEnvelope<T>;
+};
 
 // ---- plex.tv PIN flow (/api/v2/pins) ----
 
 export const pinSchema = z.looseObject({
+  authToken: z.string().nullable().optional(),
+  clientIdentifier: z.string(),
+  code: z.string(),
   // plex.tv returns `id` as a JSON number; coerce to string so the poll
   // URL templating and the `PlexPin.id: string` type stay consistent.
-  id: z.coerce.string(),
-  code: z.string(),
-  clientIdentifier: z.string(),
   expiresIn: z.number(),
-  authToken: z.string().nullable().optional(),
+  id: z.coerce.string(),
 });
 
 /** Poll responses: only `authToken` is consumed; anything else is tolerated. */
@@ -82,23 +111,23 @@ export const pinPollSchema = z.looseObject({
 // per-server token; `provides`/`owned` filter to owned media servers.
 
 const connectionSchema = z.looseObject({
-  protocol: z.string().optional(),
-  address: z.string().optional(),
-  port: z.number().optional(),
-  uri: z.string(),
-  local: z.boolean(),
-  relay: z.boolean().optional(),
   IPv6: z.boolean().optional(),
+  address: z.string().optional(),
+  local: z.boolean(),
+  port: z.number().optional(),
+  protocol: z.string().optional(),
+  relay: z.boolean().optional(),
+  uri: z.string(),
 });
 
 export const serverResourceSchema = z.looseObject({
-  name: z.string(),
-  clientIdentifier: z.string(),
   /** null on non-server devices (e.g. Plexamp clients); servers may also omit it. */
   accessToken: z.string().nullable().optional(),
+  clientIdentifier: z.string(),
+  connections: z.array(connectionSchema).optional(),
+  name: z.string(),
   owned: z.boolean(),
   provides: z.string().optional(),
-  connections: z.array(connectionSchema).optional(),
 });
 
 // ---- plex.tv account (/api/v2/user) ----
@@ -106,10 +135,10 @@ export const serverResourceSchema = z.looseObject({
 // plex.tv's `confirmed`; the app maps it to `verified` (see getPlexAccount).
 
 export const plexAccountSchema = z.looseObject({
-  username: z.string(),
+  confirmed: z.boolean().optional(),
   email: z.string(),
   thumb: z.string().optional(),
-  confirmed: z.boolean().optional(),
+  username: z.string(),
 });
 
 // ---- library metadata items ----
@@ -137,104 +166,104 @@ const mediaSchema = z.looseObject({
 
 export const sectionSchema = z.looseObject({
   key: z.string(),
-  type: z.string(),
   title: z.string(),
+  type: z.string(),
 });
 
 export const artistSchema = z.looseObject({
-  ratingKey: z.string(),
-  key: z.string(),
-  type: z.literal("artist"),
-  title: z.string(),
-  thumb: z.string().optional(),
+  Genre: z.array(genreSchema).optional(),
   art: z.string().optional(),
   childCount: z.number().optional(),
+  key: z.string(),
   leafCount: z.number().optional(),
-  Genre: z.array(genreSchema).optional(),
+  ratingKey: z.string(),
+  thumb: z.string().optional(),
+  title: z.string(),
+  type: z.literal("artist"),
 });
 
 export const albumSchema = z.looseObject({
-  ratingKey: z.string(),
   key: z.string(),
-  type: z.literal("album"),
-  title: z.string(),
-  parentTitle: z.string().optional(),
-  parentRatingKey: z.string().optional(),
-  thumb: z.string().optional(),
-  year: z.number().optional(),
   leafCount: z.number().optional(),
+  parentRatingKey: z.string().optional(),
+  parentTitle: z.string().optional(),
+  ratingKey: z.string(),
+  thumb: z.string().optional(),
+  title: z.string(),
+  type: z.literal("album"),
   viewCount: z.number().optional(),
+  year: z.number().optional(),
 });
 
 export const trackSchema = z.looseObject({
-  ratingKey: z.string(),
-  key: z.string(),
-  type: z.literal("track"),
-  title: z.string(),
-  parentTitle: z.string().optional(),
-  parentRatingKey: z.string().optional(),
-  grandparentTitle: z.string().optional(),
-  grandparentRatingKey: z.string().optional(),
-  index: z.number().optional(),
-  duration: z.number().optional(),
-  thumb: z.string().optional(),
-  viewCount: z.number().optional(),
   Media: z.array(mediaSchema).optional(),
+  duration: z.number().optional(),
+  grandparentRatingKey: z.string().optional(),
+  grandparentTitle: z.string().optional(),
+  index: z.number().optional(),
+  key: z.string(),
+  parentRatingKey: z.string().optional(),
+  parentTitle: z.string().optional(),
+  ratingKey: z.string(),
+  thumb: z.string().optional(),
+  title: z.string(),
+  type: z.literal("track"),
+  viewCount: z.number().optional(),
 });
 
 export const playlistSchema = z.looseObject({
-  ratingKey: z.string(),
-  key: z.string(),
-  type: z.literal("playlist"),
-  title: z.string(),
-  playlistType: z.string().optional(),
   composite: z.string().optional(),
-  year: z.number().optional(),
   duration: z.number().optional(),
+  key: z.string(),
   leafCount: z.number().optional(),
+  playlistType: z.string().optional(),
+  ratingKey: z.string(),
+  title: z.string(),
+  type: z.literal("playlist"),
+  year: z.number().optional(),
 });
 
 export const hubItemSchema = z.looseObject({
-  ratingKey: z.string(),
-  key: z.string(),
-  type: z.string(),
-  title: z.string(),
-  thumb: z.string().optional(),
-  composite: z.string().optional(),
+  addedAt: z.number().optional(),
   art: z.string().optional(),
-  parentTitle: z.string().optional(),
-  parentRatingKey: z.string().optional(),
-  grandparentTitle: z.string().optional(),
-  grandparentRatingKey: z.string().optional(),
-  year: z.number().optional(),
-  duration: z.number().optional(),
-  leafCount: z.number().optional(),
   childCount: z.number().optional(),
+  composite: z.string().optional(),
+  duration: z.number().optional(),
+  grandparentRatingKey: z.string().optional(),
+  grandparentTitle: z.string().optional(),
+  key: z.string(),
+  lastViewedAt: z.number().optional(),
+  leafCount: z.number().optional(),
+  parentRatingKey: z.string().optional(),
+  parentTitle: z.string().optional(),
   playlistType: z.string().optional(),
+  ratingKey: z.string(),
+  thumb: z.string().optional(),
+  title: z.string(),
+  type: z.string(),
+  updatedAt: z.number().optional(),
   viewCount: z.number().optional(),
   viewedAt: z.number().optional(),
-  lastViewedAt: z.number().optional(),
-  addedAt: z.number().optional(),
-  updatedAt: z.number().optional(),
+  year: z.number().optional(),
 });
 
 /** A server-provided Home row and the media items displayed inside it. */
 export const hubSchema = z.looseObject({
-  key: z.string().optional(),
-  title: z.string().optional(),
-  type: z.string().optional(),
-  hubIdentifier: z.string().optional(),
-  context: z.string().optional(),
-  size: z.number().optional(),
-  totalSize: z.number().optional(),
   Metadata: z.array(hubItemSchema).optional(),
+  context: z.string().optional(),
+  hubIdentifier: z.string().optional(),
+  key: z.string().optional(),
+  size: z.number().optional(),
+  title: z.string().optional(),
+  totalSize: z.number().optional(),
+  type: z.string().optional(),
 });
 
 /** Totals carried on single-metadata `MediaContainer` envelopes ("N songs, M min"). */
 const metadataTotalsSchema = z.looseObject({
-  size: z.number().optional(),
-  leafCount: z.number().optional(),
   duration: z.number().optional(),
+  leafCount: z.number().optional(),
+  size: z.number().optional(),
 });
 
 // ---- derived types mirroring src/bun/plex/types.ts domain interfaces ----

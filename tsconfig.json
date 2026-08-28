@@ -21,7 +21,8 @@
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noPropertyAccessFromIndexSignature": true
+    "noPropertyAccessFromIndexSignature": true,
+    "forceConsistentCasingInFileNames": false
   },
   "include": ["src/**/*", "tests/**/*", "electrobun.config.ts"],
   "exclude": ["node_modules", "dist", "build", "../../package/dist"]

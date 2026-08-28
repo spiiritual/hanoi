@@ -4,71 +4,86 @@ export const HOME_HUB_PREVIEW_SIZE = 6;
 
 const musicItemTypes = new Set(["artist", "album", "track", "playlist"]);
 
-function isMusicHomeItem(item: PlexHubItem): boolean {
-  if (!musicItemTypes.has(item.type)) return false;
+const isMusicHomeItem = (item: PlexHubItem): boolean => {
+  if (!musicItemTypes.has(item.type)) {
+    return false;
+  }
   return item.type !== "playlist" || item.playlistType !== "video";
-}
+};
 
 /** Keep Plex's row order while omitting non-music rows and cards. */
-export function filterMusicHomeHubs(hubs: PlexHub[]): PlexHub[] {
-  return hubs.flatMap((hub) => {
+export const filterMusicHomeHubs = (hubs: PlexHub[]): PlexHub[] =>
+  hubs.flatMap((hub) => {
     const metadata = (hub.Metadata ?? []).filter(isMusicHomeItem);
     return metadata.length > 0 ? [{ ...hub, Metadata: metadata }] : [];
   });
-}
 
 export type HomeHubItemInteraction = "track" | "other";
 
 /** Interaction affordance shown for a Plex Home card. */
-export function homeHubItemInteraction(item: PlexHubItem): HomeHubItemInteraction {
-  if (item.type === "track") return "track";
+export const homeHubItemInteraction = (
+  item: PlexHubItem
+): HomeHubItemInteraction => {
+  if (item.type === "track") {
+    return "track";
+  }
   return "other";
-}
+};
 
 /** Plex Home hubs are previews when they fill all six card slots. */
-export function shouldShowHomeHubSeeAll(hub: PlexHub): boolean {
-  return (hub.Metadata?.length ?? 0) >= HOME_HUB_PREVIEW_SIZE;
-}
+export const shouldShowHomeHubSeeAll = (hub: PlexHub): boolean =>
+  (hub.Metadata?.length ?? 0) >= HOME_HUB_PREVIEW_SIZE;
 
 /** Text shown beneath cards in a Plex Home row. */
-export function homeHubItemMeta(item: PlexHubItem): string {
+export const homeHubItemMeta = (item: PlexHubItem): string => {
   if (item.type === "track") {
-    return [item.grandparentTitle, item.parentTitle].filter(Boolean).join(" · ") || "Song";
+    const byline = [item.grandparentTitle, item.parentTitle]
+      .filter((value): value is string => Boolean(value))
+      .join(" · ");
+    return byline.length > 0 ? byline : "Song";
   }
   if (item.type === "album") {
-    return item.parentTitle || "Unknown artist";
+    return item.parentTitle ?? "Unknown artist";
   }
-  if (item.type === "artist") return "Artist";
+  if (item.type === "artist") {
+    return "Artist";
+  }
   if (item.type === "playlist") {
-    return (
-      [
-        item.playlistType === "audio" ? "Playlist" : item.playlistType,
-        item.leafCount ? `${item.leafCount} songs` : undefined,
-      ]
-        .filter(Boolean)
-        .join(" · ") || "Playlist"
+    const playlistType =
+      item.playlistType === "audio" ? "Playlist" : item.playlistType;
+    const songCount =
+      item.leafCount !== undefined && item.leafCount > 0
+        ? `${item.leafCount} songs`
+        : null;
+    const details = [playlistType, songCount].filter((value): value is string =>
+      Boolean(value)
     );
+    return details.length > 0 ? details.join(" · ") : "Playlist";
   }
   return item.type;
-}
+};
 
 /** Text shown beneath cards on a full Plex category screen. */
-export function homeCategoryItemMeta(item: PlexHubItem): string {
+export const homeCategoryItemMeta = (item: PlexHubItem): string => {
   if (item.type === "track") {
     return ["Song", item.grandparentTitle].filter(Boolean).join(" · ");
   }
   if (item.type === "album") {
     return ["Album", item.parentTitle].filter(Boolean).join(" · ");
   }
-  if (item.type === "artist") return "Artist";
+  if (item.type === "artist") {
+    return "Artist";
+  }
   if (item.type === "playlist") {
-    return [
-      "Playlist",
-      item.playlistType === "audio" ? undefined : item.playlistType,
-      item.leafCount ? `${item.leafCount} songs` : undefined,
-    ]
-      .filter(Boolean)
+    const playlistType =
+      item.playlistType === "audio" ? null : (item.playlistType ?? null);
+    const songCount =
+      item.leafCount !== undefined && item.leafCount > 0
+        ? `${item.leafCount} songs`
+        : null;
+    return ["Playlist", playlistType, songCount]
+      .filter((value): value is string => Boolean(value))
       .join(" · ");
   }
   return item.type;
-}
+};

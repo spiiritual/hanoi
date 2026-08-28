@@ -5,3 +5,5 @@ build/
 dist/
 artifacts/
 *.tsbuildinfo
+.DS_Store
+/pen/plex.pen

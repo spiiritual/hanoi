@@ -1,17 +1,22 @@
-import type { ArtworkRpcResult, ArtworkVariant } from "../../bun/plex/artwork/types.ts";
+import type {
+  ArtworkRpcResult,
+  ArtworkVariant,
+} from "../../bun/plex/artwork/types.ts";
 
-export type ArtworkSource = { kind: "server"; path: string } | { kind: "account" };
+export type ArtworkSource =
+  | { kind: "server"; path: string }
+  | { kind: "account" };
 export type ArtworkRequestSource = ArtworkSource | null | undefined;
 
 export const TRANSCODED_FALLBACK_VARIANT: ArtworkVariant = Object.freeze({
+  height: 512,
   kind: "transcoded",
   width: 512,
-  height: 512,
 });
 
 export type ArtworkRequest = (
   source: ArtworkSource,
-  variant: ArtworkVariant,
+  variant: ArtworkVariant
 ) => Promise<ArtworkRpcResult>;
 
 type CreateObjectUrl = (blob: Blob) => string;
@@ -25,6 +30,96 @@ interface RendererArtworkEntry {
   promise: Promise<string | null>;
   pendingClear: boolean;
 }
+
+interface RendererArtworkHandle {
+  key: string;
+  promise: Promise<string | null>;
+  release: () => void;
+}
+
+const decodeBase64 = (value: string): Uint8Array | null => {
+  if (!value) {
+    return null;
+  }
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.codePointAt(index) ?? 0;
+    }
+    return bytes;
+  } catch {
+    return null;
+  }
+};
+
+const containsTokenMaterial = (value: string): boolean =>
+  /(?:x-plex-token|plex-token)/iu.test(value);
+
+const positiveInteger = (value: number, name: string): number => {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${name} must be positive`);
+  }
+  return value;
+};
+
+export const normalizeArtworkSource = (
+  source: ArtworkRequestSource
+): ArtworkSource | null => {
+  if (!source) {
+    return null;
+  }
+  if (source.kind === "account") {
+    return source;
+  }
+  const path = source.path.trim();
+  if (!path || containsTokenMaterial(path)) {
+    return null;
+  }
+  return { kind: "server", path };
+};
+
+export const normalizeArtworkVariant = (
+  variant: ArtworkVariant = {}
+): ArtworkVariant =>
+  Object.fromEntries(
+    Object.entries(variant).toSorted(([left], [right]) =>
+      left.localeCompare(right)
+    )
+  );
+
+export const artworkRequestKey = (
+  source: ArtworkSource,
+  variant: ArtworkVariant = {}
+): string => {
+  const normalizedSource = normalizeArtworkSource(source);
+  if (!normalizedSource) {
+    return "";
+  }
+  const normalizedVariant = normalizeArtworkVariant(variant);
+  return JSON.stringify([
+    normalizedSource.kind,
+    normalizedSource.kind === "server" ? normalizedSource.path : "account",
+    Object.keys(normalizedVariant)
+      .toSorted((left, right) => left.localeCompare(right))
+      .map((key) => [key, normalizedVariant[key]]),
+  ]);
+};
+
+/** Identifies the exact renderer load, including a native/fallback attempt. */
+export const artworkAttemptKey = (
+  source: ArtworkSource,
+  variant: ArtworkVariant,
+  attempt: number
+): string => {
+  const requestKey = artworkRequestKey(source, variant);
+  return requestKey ? `${requestKey}|attempt:${attempt}` : "";
+};
+
+export const artworkUrlForKey = (
+  loadedImage: { key: string; url: string } | null,
+  currentKey: string
+): string | null => (loadedImage?.key === currentKey ? loadedImage.url : null);
 
 export interface RendererArtworkStoreOptions {
   maxEntries?: number;
@@ -40,76 +135,83 @@ export interface RendererArtworkStoreOptions {
  */
 export class RendererArtworkStore {
   private readonly entries = new Map<string, RendererArtworkEntry>();
+  private readonly requestArtwork: ArtworkRequest;
   private readonly maxEntries: number;
   private readonly createObjectUrl: CreateObjectUrl | null;
   private readonly revokeObjectUrl: RevokeObjectUrl;
   private readonly makeBlob: MakeBlob;
 
   constructor(
-    private readonly requestArtwork: ArtworkRequest,
-    options: RendererArtworkStoreOptions = {},
+    requestArtwork: ArtworkRequest,
+    options: RendererArtworkStoreOptions = {}
   ) {
+    this.requestArtwork = requestArtwork;
     this.maxEntries = positiveInteger(options.maxEntries ?? 128, "maxEntries");
+    const urlApi = globalThis.URL;
     this.createObjectUrl =
       options.createObjectUrl ??
-      (typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
-        ? (blob) => URL.createObjectURL(blob)
-        : null);
+      (urlApi === undefined ? null : (blob) => urlApi.createObjectURL(blob));
     this.revokeObjectUrl =
       options.revokeObjectUrl ??
-      (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function"
-        ? (url) => URL.revokeObjectURL(url)
-        : () => undefined);
+      (urlApi === undefined
+        ? () => null
+        : (url) => {
+            urlApi.revokeObjectURL(url);
+          });
     this.makeBlob =
       options.makeBlob ??
       ((data, contentType) => {
-        if (typeof Blob === "undefined") return null;
+        const BlobConstructor = globalThis.Blob;
+        if (BlobConstructor === undefined) {
+          return null;
+        }
         const buffer = new ArrayBuffer(data.byteLength);
-        new Uint8Array(buffer).set(data);
-        return new Blob([buffer], { type: contentType });
+        const bytes = new Uint8Array(buffer);
+        bytes.set(data);
+        return new BlobConstructor([buffer], { type: contentType });
       });
   }
 
   acquire(
     source: ArtworkSource,
-    variant: ArtworkVariant = {},
-  ): {
-    key: string;
-    promise: Promise<string | null>;
-    release: () => void;
-  } {
+    variant: ArtworkVariant = {}
+  ): RendererArtworkHandle {
     const normalizedSource = normalizeArtworkSource(source);
     const normalizedVariant = normalizeArtworkVariant(variant);
-    if (!normalizedSource) throw new Error("Artwork source is invalid");
+    if (!normalizedSource) {
+      throw new Error("Artwork source is invalid");
+    }
     const key = artworkRequestKey(normalizedSource, normalizedVariant);
     let entry = this.entries.get(key);
     if (entry) {
       this.entries.delete(key);
-      this.entries.set(key, entry);
     } else {
       entry = {
         key,
+        pendingClear: false,
+        promise: Promise.resolve(null),
         refs: 0,
         url: null,
-        promise: Promise.resolve(null),
-        pendingClear: false,
       };
-      const currentEntry = entry;
-      entry.promise = this.load(currentEntry, normalizedSource, normalizedVariant);
-      this.entries.set(key, entry);
+      entry.promise = this.load(entry, normalizedSource, normalizedVariant);
     }
+    this.entries.set(key, entry);
     entry.refs += 1;
     let released = false;
     return {
       key,
       promise: entry.promise,
       release: () => {
-        if (released) return;
+        if (released) {
+          return;
+        }
         released = true;
-        entry!.refs = Math.max(0, entry!.refs - 1);
-        if (entry!.refs === 0 && entry!.pendingClear) {
-          this.revoke(entry!.url);
-          if (this.entries.get(entry!.key) === entry) this.entries.delete(entry!.key);
+        entry.refs = Math.max(0, entry.refs - 1);
+        if (entry.refs === 0 && entry.pendingClear) {
+          this.revoke(entry.url);
+          if (this.entries.get(entry.key) === entry) {
+            this.entries.delete(entry.key);
+          }
           return;
         }
         this.trim();
@@ -136,15 +238,21 @@ export class RendererArtworkStore {
   private async load(
     entry: RendererArtworkEntry,
     source: ArtworkSource,
-    variant: ArtworkVariant,
+    variant: ArtworkVariant
   ): Promise<string | null> {
     try {
       const result = await this.requestArtwork(source, variant);
-      if (!result || !this.createObjectUrl) return null;
+      if (!result || !this.createObjectUrl) {
+        return null;
+      }
       const data = decodeBase64(result.dataBase64);
-      if (!data || data.byteLength === 0) return null;
+      if (!data || data.byteLength === 0) {
+        return null;
+      }
       const blob = this.makeBlob(data, result.contentType);
-      if (!blob) return null;
+      if (!blob) {
+        return null;
+      }
       const url = this.createObjectUrl(blob);
       if (this.entries.get(entry.key) !== entry) {
         this.revoke(url);
@@ -160,93 +268,19 @@ export class RendererArtworkStore {
 
   private trim(): void {
     for (const [key, entry] of this.entries) {
-      if (this.entries.size <= this.maxEntries) break;
-      if (entry.refs > 0) continue;
-      this.revoke(entry.url);
-      this.entries.delete(key);
+      if (this.entries.size <= this.maxEntries) {
+        break;
+      }
+      if (entry.refs === 0) {
+        this.revoke(entry.url);
+        this.entries.delete(key);
+      }
     }
   }
 
   private revoke(url: string | null): void {
-    if (url) this.revokeObjectUrl(url);
-  }
-}
-
-export function normalizeArtworkSource(source: ArtworkRequestSource): ArtworkSource | null {
-  if (!source) return null;
-  if (source.kind === "account") return source;
-  if (source.kind !== "server" || typeof source.path !== "string") return null;
-  const path = source.path.trim();
-  if (!path || containsTokenMaterial(path)) return null;
-  return { kind: "server", path };
-}
-
-export function normalizeArtworkVariant(variant: ArtworkVariant = {}): ArtworkVariant {
-  if (!variant || typeof variant !== "object" || Array.isArray(variant)) return {};
-  const normalized: Record<string, string | number | boolean | null> = {};
-  for (const key of Object.keys(variant).sort()) {
-    const value = variant[key];
-    if (
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean" ||
-      value === null
-    ) {
-      normalized[key] = value;
+    if (url !== null && url.length > 0) {
+      this.revokeObjectUrl(url);
     }
   }
-  return normalized;
-}
-
-export function artworkRequestKey(source: ArtworkSource, variant: ArtworkVariant = {}): string {
-  const normalizedSource = normalizeArtworkSource(source);
-  if (!normalizedSource) return "";
-  const normalizedVariant = normalizeArtworkVariant(variant);
-  return JSON.stringify([
-    normalizedSource.kind,
-    normalizedSource.kind === "server" ? normalizedSource.path : "account",
-    Object.keys(normalizedVariant)
-      .sort()
-      .map((key) => [key, normalizedVariant[key]]),
-  ]);
-}
-
-/** Identifies the exact renderer load, including a native/fallback attempt. */
-export function artworkAttemptKey(
-  source: ArtworkSource,
-  variant: ArtworkVariant,
-  attempt: number,
-): string {
-  const requestKey = artworkRequestKey(source, variant);
-  return requestKey ? `${requestKey}|attempt:${attempt}` : "";
-}
-
-export function artworkUrlForKey(
-  loadedImage: { key: string; url: string } | null,
-  currentKey: string,
-): string | null {
-  return loadedImage?.key === currentKey ? loadedImage.url : null;
-}
-
-function decodeBase64(value: string): Uint8Array | null {
-  if (!value) return null;
-  try {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return bytes;
-  } catch {
-    return null;
-  }
-}
-
-function containsTokenMaterial(value: string): boolean {
-  return /(?:x-plex-token|plex-token)/i.test(value);
-}
-
-function positiveInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be positive`);
-  return value;
 }

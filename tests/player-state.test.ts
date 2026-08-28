@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { createPlayerState, type PlaybackTrack } from "../src/mainview/player/state.ts";
+
+import { createPlayerState } from "../src/mainview/player/state.ts";
+import type { PlaybackTrack } from "../src/mainview/player/state.ts";
 
 type AudioListener = () => void;
 
@@ -14,11 +16,11 @@ class FakeAudio {
   networkState = 1;
   bufferedEnd = 12;
   buffered = {
+    end: () => this.bufferedEnd,
     length: 1,
     start: () => 0,
-    end: () => this.bufferedEnd,
   };
-  private listeners = new Map<string, Set<AudioListener>>();
+  private readonly listeners = new Map<string, Set<AudioListener>>();
 
   addEventListener(type: string, listener: AudioListener) {
     const listeners = this.listeners.get(type) ?? new Set<AudioListener>();
@@ -26,66 +28,99 @@ class FakeAudio {
     this.listeners.set(type, listeners);
   }
 
-  load() {}
+  load(): void {
+    const { src } = this;
+    if (src.length === 0) {
+      this.src = src;
+    }
+  }
 
   pause() {
     const wasPlaying = !this.paused;
     this.paused = true;
-    if (wasPlaying) this.emit("pause");
+    if (wasPlaying) {
+      this.emit("pause");
+    }
   }
 
-  play() {
+  async play(): Promise<void> {
     this.paused = false;
     this.ended = false;
     this.emit("play");
     this.emit("playing");
-    return Promise.resolve();
+    await Promise.resolve();
   }
 
   emit(type: string) {
-    for (const listener of this.listeners.get(type) ?? []) listener();
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener();
+    }
   }
 }
 
 const firstTrack: PlaybackTrack = {
+  duration: 12_000,
   ratingKey: "track-1",
   title: "First song",
-  duration: 12_000,
 };
 const secondTrack: PlaybackTrack = {
+  duration: 20_000,
   ratingKey: "track-2",
   title: "Second song",
-  duration: 20_000,
 };
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (cause: unknown) => void;
+}
+
+const deferred = <T>(): Deferred<T> => {
+  const { promise, reject, resolve } = Promise.withResolvers<T>();
+  return { promise, reject, resolve };
 };
 
-function deferred<T>(): Deferred<T> {
-  let resolve!: Deferred<T>["resolve"];
-  let reject!: Deferred<T>["reject"];
-  const promise = new Promise<T>((nextResolve, nextReject) => {
-    resolve = nextResolve;
-    reject = nextReject;
-  });
-  return { promise, resolve, reject };
-}
+type PlayerOptionsWithoutAudio = Omit<
+  Parameters<typeof createPlayerState>[0],
+  "audio"
+>;
 
-function makePlayer(audio: FakeAudio, urls: string[], scrobbled: string[]) {
-  return createPlayerState({
-    audio: audio as unknown as HTMLAudioElement,
-    streamUrl: async (ratingKey) => {
-      urls.push(ratingKey);
-      return `https://plex.test/${ratingKey}.mp3`;
+const createPlayerWithFakeAudio = (
+  audio: FakeAudio,
+  options: PlayerOptionsWithoutAudio
+): ReturnType<typeof createPlayerState> => {
+  const originalAudioDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "Audio"
+  );
+  Object.defineProperty(globalThis, "Audio", {
+    configurable: true,
+    value: function value(): FakeAudio {
+      return audio;
     },
+  });
+  try {
+    return createPlayerState(options);
+  } finally {
+    if (originalAudioDescriptor === undefined) {
+      Reflect.deleteProperty(globalThis, "Audio");
+    } else {
+      Object.defineProperty(globalThis, "Audio", originalAudioDescriptor);
+    }
+  }
+};
+
+const makePlayer = (audio: FakeAudio, urls: string[], scrobbled: string[]) =>
+  createPlayerWithFakeAudio(audio, {
     scrobble: async (key) => {
       scrobbled.push(key);
+      await Promise.resolve();
+    },
+    streamUrl: async (ratingKey) => {
+      urls.push(ratingKey);
+      return await Promise.resolve(`https://plex.test/${ratingKey}.mp3`);
     },
   });
-}
 
 test("loads an album queue and advances when a track ends", async () => {
   const audio = new FakeAudio();
@@ -109,6 +144,7 @@ test("loads an album queue and advances when a track ends", async () => {
   audio.ended = true;
   audio.emit("ended");
   await Promise.resolve();
+  await Promise.resolve();
   expect(player.getSnapshot()).toMatchObject({
     currentIndex: 1,
     currentTrack: secondTrack,
@@ -119,14 +155,16 @@ test("loads an album queue and advances when a track ends", async () => {
 
 test("retries a rejected scrobble after queue advancement", async () => {
   const audio = new FakeAudio();
-  const requests: Array<{ key: string; deferred: Deferred<void> }> = [];
-  const player = createPlayerState({
-    audio: audio as unknown as HTMLAudioElement,
-    streamUrl: async (ratingKey) => `https://plex.test/${ratingKey}.mp3`,
-    scrobble: (key) => {
-      const request = deferred<void>();
-      requests.push({ key, deferred: request });
-      return request.promise;
+  const requests: { key: string; deferred: Deferred<null> }[] = [];
+  const player = createPlayerWithFakeAudio(audio, {
+    scrobble: async (key) => {
+      const request = deferred<null>();
+      requests.push({ deferred: request, key });
+      await request.promise;
+    },
+    streamUrl: async (ratingKey) => {
+      await Promise.resolve();
+      return `https://plex.test/${ratingKey}.mp3`;
     },
   });
 
@@ -140,7 +178,7 @@ test("retries a rejected scrobble after queue advancement", async () => {
   await Promise.resolve();
   expect(player.getSnapshot().currentIndex).toBe(1);
 
-  requests[0]!.deferred.reject(new Error("temporary scrobble failure"));
+  requests[0].deferred.reject(new Error("temporary scrobble failure"));
   await Promise.resolve();
 
   await player.playPrevious();
@@ -149,7 +187,7 @@ test("retries a rejected scrobble after queue advancement", async () => {
   audio.emit("timeupdate");
   expect(requests.map(({ key }) => key)).toEqual(["track-1", "track-1"]);
 
-  requests[1]!.deferred.resolve();
+  requests[1].deferred.resolve(null);
   await Promise.resolve();
   audio.emit("timeupdate");
   expect(requests.map(({ key }) => key)).toEqual(["track-1", "track-1"]);
@@ -158,20 +196,22 @@ test("retries a rejected scrobble after queue advancement", async () => {
 test("retries resolving a failed stream when Play is pressed", async () => {
   const audio = new FakeAudio();
   let resolveCalls = 0;
-  const player = createPlayerState({
-    audio: audio as unknown as HTMLAudioElement,
+  const player = createPlayerWithFakeAudio(audio, {
+    scrobble: async () => {
+      await Promise.resolve();
+    },
     streamUrl: async (ratingKey) => {
       resolveCalls += 1;
+      await Promise.resolve();
       return resolveCalls === 1 ? null : `https://plex.test/${ratingKey}.mp3`;
     },
-    scrobble: async () => undefined,
   });
 
   await player.playTrack(firstTrack);
   expect(resolveCalls).toBe(1);
   expect(player.getSnapshot()).toMatchObject({
-    status: "paused",
     error: "Plex could not find an audio file for this track.",
+    status: "paused",
   });
 
   await player.togglePlay();
@@ -181,18 +221,24 @@ test("retries resolving a failed stream when Play is pressed", async () => {
 
 test("reports resume buffering metrics", async () => {
   const audio = new FakeAudio();
-  const metrics: Array<{
+  const metrics: {
     event: string;
     elapsedMs?: number;
     bufferedAhead?: number;
-  }> = [];
+  }[] = [];
   let now = 100;
-  const player = createPlayerState({
-    audio: audio as unknown as HTMLAudioElement,
-    streamUrl: async (ratingKey) => `https://plex.test/${ratingKey}.mp3`,
-    scrobble: async () => undefined,
+  const player = createPlayerWithFakeAudio(audio, {
     now: () => now,
-    onPlaybackMetric: (metric) => metrics.push(metric),
+    onPlaybackMetric: (metric) => {
+      metrics.push(metric);
+    },
+    scrobble: async () => {
+      await Promise.resolve();
+    },
+    streamUrl: async (ratingKey) => {
+      await Promise.resolve();
+      return `https://plex.test/${ratingKey}.mp3`;
+    },
   });
 
   await player.playTrack(firstTrack);
@@ -200,7 +246,11 @@ test("reports resume buffering metrics", async () => {
   now += 42;
   await player.togglePlay();
 
-  expect(metrics.map(({ event }) => event)).toEqual(["playing", "resume-request", "playing"]);
+  expect(metrics.map(({ event }) => event)).toEqual([
+    "playing",
+    "resume-request",
+    "playing",
+  ]);
   expect(metrics[1]?.bufferedAhead).toBe(12);
   expect(metrics[2]?.elapsedMs).toBe(0);
 });
@@ -213,8 +263,8 @@ test("toggles playback, seeks, and changes volume", async () => {
   audio.currentTime = 2.25;
   await player.togglePlay();
   expect(player.getSnapshot()).toMatchObject({
-    status: "paused",
     currentTime: 2.25,
+    status: "paused",
   });
   await player.togglePlay();
   expect(player.getSnapshot().status).toBe("playing");

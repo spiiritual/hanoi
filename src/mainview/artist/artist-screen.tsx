@@ -1,98 +1,130 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { PlexAlbum, PlexArtist, PlexSection, PlexTrack } from "../../bun/plex/types.ts";
-import { Icon } from "../components/Icon.tsx";
-import type { ShellView } from "../app-state.ts";
-import { plex } from "../plex.ts";
-import { ArtworkImage } from "../artwork/ArtworkImage.tsx";
-import { playerState } from "../view-state.ts";
-import { MediaCard } from "../home/HomeContent.tsx";
 
-function formatTrackDuration(duration?: number): string {
-  if (!duration || duration < 0) return "--:--";
+import type {
+  PlexAlbum,
+  PlexArtist,
+  PlexSection,
+  PlexTrack,
+} from "../../bun/plex/types.ts";
+import type { ShellView } from "../app-state.ts";
+import { ArtworkImage } from "../artwork/artwork-image.tsx";
+import { Icon } from "../components/icon.tsx";
+import { MediaCard } from "../home/home-content.tsx";
+import { plex } from "../plex.ts";
+import { playerState } from "../view-state.ts";
+
+const formatTrackDuration = (duration?: number): string => {
+  if (duration === undefined || duration === null || duration <= 0) {
+    return "--:--";
+  }
   const totalSeconds = Math.floor(duration / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
+};
 
-function formatCount(count: number, singular: string): string {
-  return `${count} ${singular}${count === 1 ? "" : "s"}`;
-}
+const formatCount = (count: number, singular: string): string =>
+  `${count} ${singular}${count === 1 ? "" : "s"}`;
 
-const libraryTabs: Array<[ShellView, string]> = [
+const libraryTabs: [ShellView, string][] = [
   ["albums", "Albums"],
   ["artists", "Artists"],
   ["songs", "Songs"],
   ["playlists", "Playlists"],
 ];
+const libraryStatuses = ["idle", "loading", "ready", "error"] as const;
+type LibraryStatus = (typeof libraryStatuses)[number];
 
-function ArtistArtwork({ artist }: { artist: PlexArtist }) {
-  const path = artist["thumb"] ?? artist["art"];
+const getRandomIndex = (exclusiveLimit: number): number => {
+  const randomValues = new Uint32Array(1);
+  crypto.getRandomValues(randomValues);
+  return (randomValues[0] ?? 0) % exclusiveLimit;
+};
+
+const ArtistArtwork = ({ artist }: { artist: PlexArtist }) => {
+  const path = artist.thumb ?? artist.art;
   return (
-    <div className="artist-detail-avatar" aria-label={`${artist.title} artwork`}>
+    <figure
+      className="artist-detail-avatar"
+      aria-label={`${artist.title} artwork`}
+    >
       <ArtworkImage
-        source={path ? { kind: "server", path } : null}
+        source={
+          path === undefined || path === "" ? null : { kind: "server", path }
+        }
         priority
         alt={`${artist.title} artwork`}
         fallback={artist.title.charAt(0).toUpperCase() || "♪"}
         fallbackClassName="artist-detail-avatar-fallback"
       />
-    </div>
+    </figure>
   );
-}
+};
 
-function TrackArtwork({ track }: { track: PlexTrack }) {
-  return (
-    <div className="artist-song-art" aria-hidden="true">
-      <ArtworkImage
-        source={track.thumb ? { kind: "server", path: track.thumb } : null}
-        alt=""
-        fallback={track.title.charAt(0).toUpperCase() || "♪"}
-        fallbackClassName="artist-song-art-fallback"
-      />
-    </div>
-  );
-}
+const TrackArtwork = ({ track }: { track: PlexTrack }) => (
+  <div className="artist-song-art" aria-hidden="true">
+    <ArtworkImage
+      source={
+        track.thumb === undefined || track.thumb === ""
+          ? null
+          : { kind: "server", path: track.thumb }
+      }
+      alt=""
+      fallback={(track.title ?? "").charAt(0).toUpperCase() || "♪"}
+      fallbackClassName="artist-song-art-fallback"
+    />
+  </div>
+);
 
-function trackMeta(track: PlexTrack): string {
-  return `${track.parentTitle ?? "Single"} · ${track.viewCount ?? 0} plays`;
-}
+const trackMeta = (track: PlexTrack): string =>
+  `${track.parentTitle ?? "Single"} · ${track.viewCount ?? 0} plays`;
 
-export function ArtistDetail({
+export const ArtistDetail = ({
   ratingKey,
   onAlbum,
 }: {
   ratingKey: string;
   onAlbum: (album: PlexAlbum) => void;
-}) {
-  const [detail, setDetail] = useState<Awaited<ReturnType<typeof plex.getArtist>> | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+}) => {
+  const [detail, setDetail] = useState<Awaited<
+    ReturnType<typeof plex.getArtist>
+  > | null>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    "loading"
+  );
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [liked, setLiked] = useState(false);
   const player = useSyncExternalStore(
     playerState.subscribe,
     playerState.getSnapshot,
-    playerState.getSnapshot,
+    playerState.getSnapshot
   );
 
   useEffect(() => {
     let active = true;
-    setStatus("loading");
-    setError(null);
-    setDetail(null);
-    void plex
-      .getArtist(ratingKey)
-      .then((result) => {
-        if (!active) return;
+    const loadArtist = async (attempt: number): Promise<void> => {
+      try {
+        const result = await plex.getArtist(ratingKey);
+        if (!active || attempt !== reload) {
+          return;
+        }
         setDetail(result);
+        setError(null);
         setStatus("ready");
-      })
-      .catch((cause: unknown) => {
-        if (!active) return;
-        setError(cause instanceof Error ? cause.message : "Failed to load artist");
+      } catch (caughtError: unknown) {
+        if (!active || attempt !== reload) {
+          return;
+        }
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Failed to load artist"
+        );
         setStatus("error");
-      });
+      }
+    };
+    void loadArtist(reload);
     return () => {
       active = false;
     };
@@ -101,7 +133,7 @@ export function ArtistDetail({
   const topTracks = detail?.topTracks ?? [];
   const visibleTopTracks = topTracks.slice(0, 4);
   const artistIsActive = topTracks.some(
-    (track) => track.ratingKey === player.currentTrack?.ratingKey,
+    (track) => track.ratingKey === player.currentTrack?.ratingKey
   );
   const artistIsPlaying = artistIsActive && player.status === "playing";
   const playArtist = () => {
@@ -114,8 +146,11 @@ export function ArtistDetail({
   const shuffleArtist = () => {
     const shuffled = [...topTracks];
     for (let index = shuffled.length - 1; index > 0; index -= 1) {
-      const randomIndex = Math.floor(Math.random() * (index + 1));
-      [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
+      const randomIndex = getRandomIndex(index + 1);
+      [shuffled[index], shuffled[randomIndex]] = [
+        shuffled[randomIndex],
+        shuffled[index],
+      ];
     }
     void playerState.playQueue(shuffled, 0);
   };
@@ -141,11 +176,16 @@ export function ArtistDetail({
     return (
       <div className="artist-detail" id="artist-detail">
         <div className="artist-detail-error" role="alert">
-          <span>Couldn’t load this artist{error ? `: ${error}` : "."}</span>
+          <span>
+            Couldn’t load this artist
+            {error === null || error === "" ? "." : `: ${error}`}
+          </span>
           <button
             className="artist-detail-retry"
             type="button"
-            onClick={() => setReload((value) => value + 1)}
+            onClick={() => {
+              setReload((value) => value + 1);
+            }}
           >
             Try again
           </button>
@@ -160,11 +200,16 @@ export function ArtistDetail({
       <header className="artist-detail-header">
         <ArtistArtwork artist={artist} />
         <div className="artist-detail-info">
-          <h1 className="artist-detail-title">{artist.title || "Unknown artist"}</h1>
+          <h1 className="artist-detail-title">
+            {artist.title || "Unknown artist"}
+          </h1>
           <p className="artist-detail-meta">
-            Artist · {formatCount(albumCount, "album")} · {formatCount(songCount, "song")}
+            Artist · {formatCount(albumCount, "album")} ·{" "}
+            {formatCount(songCount, "song")}
           </p>
-          {genres.length > 0 && <p className="artist-detail-genres">{genres.join(" · ")}</p>}
+          {genres.length > 0 && (
+            <p className="artist-detail-genres">{genres.join(" · ")}</p>
+          )}
           <div className="artist-detail-actions">
             <button
               className="artist-detail-play"
@@ -197,7 +242,9 @@ export function ArtistDetail({
               type="button"
               aria-label={liked ? "Unlike artist" : "Like artist"}
               aria-pressed={liked}
-              onClick={() => setLiked((value) => !value)}
+              onClick={() => {
+                setLiked((value) => !value);
+              }}
             >
               <Icon>
                 <path d="M20.8 8.7c0 5.5-8.8 10.3-8.8 10.3S3.2 14.2 3.2 8.7A4.7 4.7 0 0 1 12 6.4a4.7 4.7 0 0 1 8.8 2.3Z" />
@@ -218,7 +265,10 @@ export function ArtistDetail({
         </div>
       </header>
 
-      <section className="artist-popular-section" aria-labelledby="artist-popular-title">
+      <section
+        className="artist-popular-section"
+        aria-labelledby="artist-popular-title"
+      >
         <div className="artist-section-header">
           <h2 className="artist-section-title" id="artist-popular-title">
             Your Top Songs
@@ -229,19 +279,24 @@ export function ArtistDetail({
         ) : (
           <ul className="artist-song-list">
             {visibleTopTracks.map((track, index) => {
-              const isCurrentTrack = player.currentTrack?.ratingKey === track.ratingKey;
+              const isCurrentTrack =
+                player.currentTrack?.ratingKey === track.ratingKey;
               return (
                 <li key={track.ratingKey}>
                   <button
                     className={`artist-song-row${isCurrentTrack ? " is-playing" : ""}`}
                     type="button"
                     aria-current={isCurrentTrack ? "true" : undefined}
-                    onClick={() => playTrack(track, index)}
+                    onClick={() => {
+                      playTrack(track, index);
+                    }}
                   >
                     <TrackArtwork track={track} />
                     <span className="artist-song-copy">
                       <span className="artist-song-title">{track.title}</span>
-                      <span className="artist-song-meta">{trackMeta(track)}</span>
+                      <span className="artist-song-meta">
+                        {trackMeta(track)}
+                      </span>
                     </span>
                     <span className="artist-song-duration">
                       {formatTrackDuration(track.duration)}
@@ -254,7 +309,10 @@ export function ArtistDetail({
         )}
       </section>
 
-      <section className="artist-albums-section" aria-labelledby="artist-albums-title">
+      <section
+        className="artist-albums-section"
+        aria-labelledby="artist-albums-title"
+      >
         <div className="artist-section-header">
           <h2 className="artist-section-title" id="artist-albums-title">
             Albums
@@ -268,10 +326,17 @@ export function ArtistDetail({
               <MediaCard
                 item={album}
                 category
-                meta={[album.year ? String(album.year) : undefined, `${album.viewCount ?? 0} plays`]
+                meta={[
+                  album.year === undefined || album.year === null
+                    ? undefined
+                    : String(album.year),
+                  `${album.viewCount ?? 0} plays`,
+                ]
                   .filter(Boolean)
                   .join(" · ")}
-                onAlbum={() => onAlbum(album)}
+                onAlbum={() => {
+                  onAlbum(album);
+                }}
                 key={album.ratingKey}
               />
             ))}
@@ -280,27 +345,33 @@ export function ArtistDetail({
       </section>
     </div>
   );
-}
+};
 
-function ArtistCard({
+const ArtistCard = ({
   artist,
   onArtist,
 }: {
   artist: PlexArtist;
   onArtist: (artist: PlexArtist) => void;
-}) {
-  const path = artist["thumb"] ?? artist["art"];
+}) => {
+  const path = artist.thumb ?? artist.art;
   return (
     <li className="artist-card">
       <button
         className="artist-card-button"
         type="button"
         aria-label={`Open artist ${artist.title}`}
-        onClick={() => onArtist(artist)}
+        onClick={() => {
+          onArtist(artist);
+        }}
       >
         <div className="artist-card-avatar">
           <ArtworkImage
-            source={path ? { kind: "server", path } : null}
+            source={
+              path === undefined || path === ""
+                ? null
+                : { kind: "server", path }
+            }
             alt=""
             fallback={artist.title.charAt(0).toUpperCase() || "♪"}
             fallbackClassName="artist-card-avatar-fallback"
@@ -313,9 +384,9 @@ function ArtistCard({
       </button>
     </li>
   );
-}
+};
 
-export function ArtistLibrary({
+export const ArtistLibrary = ({
   sections,
   sectionsStatus,
   sectionsError,
@@ -323,75 +394,89 @@ export function ArtistLibrary({
   onView,
 }: {
   sections: PlexSection[];
-  sectionsStatus: "idle" | "loading" | "ready" | "error";
+  sectionsStatus: LibraryStatus;
   sectionsError: string | null;
   onArtist: (artist: PlexArtist) => void;
   onView: (view: ShellView) => void;
-}) {
+}) => {
   const [artists, setArtists] = useState<PlexArtist[]>([]);
-  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [status, setStatus] = useState<LibraryStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let active = true;
-    if (sectionsStatus !== "ready") {
-      setStatus(sectionsStatus);
-      setError(sectionsError);
-      setArtists([]);
-      return () => {
-        active = false;
-      };
-    }
-    if (sections.length === 0) {
-      setStatus("ready");
-      setError(null);
-      setArtists([]);
+    if (sectionsStatus !== "ready" || sections.length === 0) {
       return () => {
         active = false;
       };
     }
 
-    setStatus("loading");
-    setError(null);
-    void Promise.all(
-      sections.map((section) => plex.getArtists(section.key, { sort: "addedAt:desc" })),
-    )
-      .then((results) => {
-        if (!active) return;
+    const loadArtists = async (attempt: number): Promise<void> => {
+      try {
+        const results = await Promise.all(
+          sections.map(
+            async (section) =>
+              await plex.getArtists(section.key, { sort: "addedAt:desc" })
+          )
+        );
+        if (!active || attempt !== reload) {
+          return;
+        }
         const unique = new Map<string, PlexArtist>();
         for (const result of results) {
-          for (const artist of result) unique.set(artist.ratingKey, artist);
+          for (const artist of result) {
+            unique.set(artist.ratingKey, artist);
+          }
         }
         setArtists([...unique.values()]);
         setStatus("ready");
-      })
-      .catch((cause: unknown) => {
-        if (!active) return;
-        setError(cause instanceof Error ? cause.message : "Failed to load artists");
+      } catch (caughtError: unknown) {
+        if (!active || attempt !== reload) {
+          return;
+        }
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Failed to load artists"
+        );
         setStatus("error");
-      });
+      }
+    };
+    void loadArtists(reload);
     return () => {
       active = false;
     };
-  }, [sections, sectionsStatus, sectionsError, reload]);
-  const message =
-    status === "loading" || sectionsStatus === "loading"
-      ? "Loading artists…"
-      : status === "error"
-        ? `Couldn’t load your artists${error ? `: ${error}` : "."}`
-        : artists.length === 0
-          ? "No artists found in this library."
-          : null;
+  }, [sections, sectionsStatus, reload]);
+
+  const displayedStatus =
+    sectionsStatus === "ready" && sections.length > 0 ? status : sectionsStatus;
+  const displayedError = sectionsStatus === "ready" ? error : sectionsError;
+  const displayedArtists =
+    sectionsStatus === "ready" && sections.length > 0 ? artists : [];
+  let message: string | null = null;
+  if (displayedStatus === "loading" || sectionsStatus === "loading") {
+    message = "Loading artists…";
+  } else if (displayedStatus === "error") {
+    const errorSuffix =
+      displayedError === null || displayedError === ""
+        ? "."
+        : `: ${displayedError}`;
+    message = `Couldn’t load your artists${errorSuffix}`;
+  } else if (displayedArtists.length === 0) {
+    message = "No artists found in this library.";
+  }
 
   return (
     <div className="artist-library" id="artist-library">
-      <div className="artist-filter-tabs" aria-label="Library views">
+      <nav className="artist-filter-tabs" aria-label="Library views">
         {libraryTabs.map(([view, label]) => (
           <button
             className={`artist-filter-tab${view === "artists" ? " is-active" : ""}`}
             type="button"
             key={view}
-            onClick={() => onView(view)}
+            onClick={() => {
+              onView(view);
+            }}
             aria-current={view === "artists" ? "page" : undefined}
           >
             {label}
@@ -402,20 +487,24 @@ export function ArtistLibrary({
           <path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4m0 16 3-3m-3 3-3-3" />
         </Icon>
         <span className="artist-sort-label">Recently added</span>
-      </div>
+      </nav>
       <section className="artist-library-section">
         <h1 className="artist-library-title">Your Artists</h1>
-        {message && (
+        {message !== null && message !== "" && (
           <div
-            className={`artist-library-status${status === "error" ? " is-error" : ""}`}
+            className={`artist-library-status${displayedStatus === "error" ? " is-error" : ""}`}
             aria-live="polite"
           >
             <span>{message}</span>
-            {status === "error" && (
+            {displayedStatus === "error" && (
               <button
                 className="artist-library-retry"
                 type="button"
-                onClick={() => setReload((value) => value + 1)}
+                onClick={() => {
+                  setStatus("loading");
+                  setError(null);
+                  setReload((value) => value + 1);
+                }}
               >
                 Try again
               </button>
@@ -423,12 +512,16 @@ export function ArtistLibrary({
           </div>
         )}
         <ul className="artist-grid" id="artist-grid">
-          {status === "ready" &&
-            artists.map((artist) => (
-              <ArtistCard artist={artist} onArtist={onArtist} key={artist.ratingKey} />
+          {displayedStatus === "ready" &&
+            displayedArtists.map((artist) => (
+              <ArtistCard
+                artist={artist}
+                onArtist={onArtist}
+                key={artist.ratingKey}
+              />
             ))}
         </ul>
       </section>
     </div>
   );
-}
+};

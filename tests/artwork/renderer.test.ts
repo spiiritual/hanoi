@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import {
   artworkAttemptKey,
   artworkRequestKey,
@@ -8,37 +9,49 @@ import {
 } from "../../src/mainview/artwork/index.ts";
 
 const result = {
-  dataBase64: "AQID",
-  contentType: "image/png",
   cacheStatus: "miss" as const,
+  contentType: "image/png",
+  dataBase64: "AQID",
 };
 
 test("normalizes token-free sources and makes source/variant keys stable", () => {
-  const source = { kind: "server" as const, path: "  /library/metadata/1/thumb  " };
+  const source = {
+    kind: "server" as const,
+    path: "  /library/metadata/1/thumb  ",
+  };
   expect(normalizeArtworkSource(source)).toEqual({
     kind: "server",
     path: "/library/metadata/1/thumb",
   });
-  expect(normalizeArtworkSource({ kind: "server", path: "/thumb?X-Plex-Token=secret" })).toBeNull();
-  expect(artworkRequestKey(source, { width: 512, height: 512 })).toBe(
-    artworkRequestKey(source, { height: 512, width: 512 }),
+  expect(
+    normalizeArtworkSource({
+      kind: "server",
+      path: "/thumb?X-Plex-Token=secret",
+    })
+  ).toBeNull();
+  expect(artworkRequestKey(source, { height: 512, width: 512 })).toBe(
+    artworkRequestKey(source, { height: 512, width: 512 })
   );
   expect(artworkRequestKey(source, {})).not.toBe(
-    artworkRequestKey(source, { kind: "transcoded", width: 512, height: 512 }),
+    artworkRequestKey(source, { height: 512, kind: "transcoded", width: 512 })
   );
-  expect(artworkRequestKey({ kind: "account" }, {})).not.toBe(artworkRequestKey(source, {}));
-  expect(artworkAttemptKey(source, { width: 512 }, 0)).not.toBe(
-    artworkAttemptKey(source, { width: 512 }, 1),
+  expect(artworkRequestKey({ kind: "account" }, {})).not.toBe(
+    artworkRequestKey(source, {})
   );
   expect(artworkAttemptKey(source, { width: 512 }, 0)).not.toBe(
-    artworkAttemptKey(source, { width: 256 }, 0),
+    artworkAttemptKey(source, { width: 512 }, 1)
+  );
+  expect(artworkAttemptKey(source, { width: 512 }, 0)).not.toBe(
+    artworkAttemptKey(source, { width: 256 }, 0)
   );
   const nativeKey = artworkAttemptKey(source, { width: 512 }, 0);
   const fallbackKey = artworkAttemptKey(source, { width: 512 }, 1);
-  expect(artworkUrlForKey({ key: nativeKey, url: "blob:old" }, fallbackKey)).toBeNull();
-  expect(artworkUrlForKey({ key: fallbackKey, url: "blob:current" }, fallbackKey)).toBe(
-    "blob:current",
-  );
+  expect(
+    artworkUrlForKey({ key: nativeKey, url: "blob:old" }, fallbackKey)
+  ).toBeNull();
+  expect(
+    artworkUrlForKey({ key: fallbackKey, url: "blob:current" }, fallbackKey)
+  ).toBe("blob:current");
 });
 
 test("deduplicates requests and releases bounded object URLs", async () => {
@@ -52,15 +65,20 @@ test("deduplicates requests and releases bounded object URLs", async () => {
       return result;
     },
     {
-      maxEntries: 1,
-      createObjectUrl: () => `blob:${++objectUrls}`,
-      revokeObjectUrl: (url) => revoked.push(url),
-      makeBlob: (data, contentType) => {
-        expect(Array.from(data)).toEqual([1, 2, 3]);
-        expect(contentType).toBe("image/png");
-        return {} as Blob;
+      createObjectUrl: () => {
+        objectUrls += 1;
+        return `blob:${objectUrls}`;
       },
-    },
+      makeBlob: (data, contentType) => {
+        expect([...data]).toEqual([1, 2, 3]);
+        expect(contentType).toBe("image/png");
+        return new Blob();
+      },
+      maxEntries: 1,
+      revokeObjectUrl: (url) => {
+        revoked.push(url);
+      },
+    }
   );
 
   const first = store.acquire({ kind: "server", path: "/one" });
@@ -82,11 +100,19 @@ test("deduplicates requests and releases bounded object URLs", async () => {
 
 test("clear defers revocation while an artwork URL is referenced", async () => {
   const revoked: string[] = [];
-  const store = new RendererArtworkStore(async () => result, {
-    createObjectUrl: () => "blob:active",
-    revokeObjectUrl: (url) => revoked.push(url),
-    makeBlob: () => ({}) as Blob,
-  });
+  const store = new RendererArtworkStore(
+    async () => {
+      await Promise.resolve();
+      return result;
+    },
+    {
+      createObjectUrl: () => "blob:active",
+      makeBlob: () => new Blob(),
+      revokeObjectUrl: (url) => {
+        revoked.push(url);
+      },
+    }
+  );
   const acquired = store.acquire({ kind: "server", path: "/active" });
 
   expect(await acquired.promise).toBe("blob:active");
@@ -101,15 +127,26 @@ test("clear defers revocation while an artwork URL is referenced", async () => {
 
 test("bounded eviction leaves active object URLs valid", async () => {
   const revoked: string[] = [];
-  const store = new RendererArtworkStore(async () => result, {
-    maxEntries: 1,
-    createObjectUrl: (() => {
-      let count = 0;
-      return () => `blob:${++count}`;
-    })(),
-    revokeObjectUrl: (url) => revoked.push(url),
-    makeBlob: () => ({}) as Blob,
-  });
+  const store = new RendererArtworkStore(
+    async () => {
+      await Promise.resolve();
+      return result;
+    },
+    {
+      createObjectUrl: (() => {
+        let count = 0;
+        return () => {
+          count += 1;
+          return `blob:${count}`;
+        };
+      })(),
+      makeBlob: () => new Blob(),
+      maxEntries: 1,
+      revokeObjectUrl: (url) => {
+        revoked.push(url);
+      },
+    }
+  );
   const active = store.acquire({ kind: "server", path: "/active" });
   const evicted = store.acquire({ kind: "server", path: "/evicted" });
 
@@ -123,10 +160,15 @@ test("bounded eviction leaves active object URLs valid", async () => {
 });
 
 test("does not require browser object URL APIs", async () => {
-  const store = new RendererArtworkStore(async () => result, {
-    createObjectUrl: undefined,
-    makeBlob: () => null,
-  });
+  const store = new RendererArtworkStore(
+    async () => {
+      await Promise.resolve();
+      return result;
+    },
+    {
+      makeBlob: () => null,
+    }
+  );
   const acquired = store.acquire({ kind: "account" });
   expect(await acquired.promise).toBeNull();
   acquired.release();

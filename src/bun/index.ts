@@ -1,35 +1,46 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import nodePath from "node:path";
+
 import { BrowserView, BrowserWindow, Utils } from "electrobun/main";
-import type { PlexRpc, ServerViewSummary } from "./plex/rpc-schema.ts";
-import { buildAuthUrl, createPin, waitForPin, type PlexPin } from "./plex/auth.ts";
-import { deleteConfig, loadConfig, saveConfig, type PlexConfig } from "./plex/config.ts";
-import {
-  PlexClient,
-  checkPlexServerStatus,
-  discoverPlexServers,
-  getPlexAccount,
-} from "./plex/client.ts";
-import { findPersistedServer, savedServerNeedsRefresh } from "./plex/server-selection.ts";
-import { streamUrl as resolveStreamUrl } from "./plex/url.ts";
-import type { PlexAccount, PlexServerInfo, PlexTrack } from "./plex/types.ts";
+
 import { ArtworkCache } from "./plex/artwork/cache.ts";
-import type { ArtworkVariant } from "./plex/artwork/types.ts";
 import {
   artworkNamespace,
   createArtworkFetcher,
   isSameArtworkSession,
   toArtworkRpcResult,
 } from "./plex/artwork/fetcher.ts";
+import type { ArtworkVariant } from "./plex/artwork/types.ts";
+import { buildAuthUrl, createPin, waitForPin } from "./plex/auth.ts";
+import type { PlexPin } from "./plex/auth.ts";
+import {
+  PlexClient,
+  checkPlexServerStatus,
+  discoverPlexServers,
+  getPlexAccount,
+} from "./plex/client.ts";
+import { deleteConfig, loadConfig, saveConfig } from "./plex/config.ts";
+import type { PlexConfig } from "./plex/config.ts";
+import type { PlexRpc, ServerViewSummary } from "./plex/rpc-schema.ts";
+import {
+  findPersistedServer,
+  savedServerNeedsRefresh,
+} from "./plex/server-selection.ts";
+import type { PlexAccount, PlexServerInfo, PlexTrack } from "./plex/types.ts";
+import { streamUrl as resolveStreamUrl } from "./plex/url.ts";
 
 let config = loadConfig();
-const artworkCache = new ArtworkCache(join(Utils.paths.userCache, "artwork"));
+const PLEX_TV_URL = "https://plex.tv";
+const PLEX_TV_HOST = "plex.tv";
+const artworkCache = new ArtworkCache(
+  nodePath.join(Utils.paths.userCache, "artwork")
+);
 let client: PlexClient | null =
   config?.server && config.token
     ? new PlexClient({
-        url: config.server.url,
-        token: config.server.token,
         clientIdentifier: config.clientIdentifier,
+        token: config.server.token,
+        url: config.server.url,
       })
     : null;
 
@@ -63,23 +74,32 @@ interface PendingServerDiscovery {
 let serverDiscoveryCache: ServerDiscoveryCache | null = null;
 let pendingServerDiscovery: PendingServerDiscovery | null = null;
 
-function isCurrentAuthAttempt(attempt: AuthAttempt): boolean {
-  return authAttempt?.id === attempt.id && !attempt.abort.signal.aborted;
-}
+const isCurrentAuthAttempt = (attempt: AuthAttempt): boolean =>
+  authAttempt?.id === attempt.id && !attempt.abort.signal.aborted;
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+const errorMessage = (error: Error | string): string =>
+  error instanceof Error ? error.message : error;
 
-function requireClient(): PlexClient {
-  if (!client) throw new Error("Not connected to a Plex server");
+const requireClient = (): PlexClient => {
+  if (!client) {
+    throw new Error("Not connected to a Plex server");
+  }
   return client;
-}
+};
 
-async function discoverServersCached(
+const hydrateAccount = async (token: string): Promise<PlexAccount> => {
+  const account = await getPlexAccount(token);
+  if (config?.token === token) {
+    config = { ...config, account };
+    saveConfig(config);
+  }
+  return account;
+};
+
+const discoverServersCached = async (
   token: string,
-  clientIdentifier: string,
-): Promise<PlexServerInfo[]> {
+  clientIdentifier: string
+): Promise<PlexServerInfo[]> => {
   const cached = serverDiscoveryCache;
   if (
     cached &&
@@ -91,138 +111,191 @@ async function discoverServersCached(
   }
 
   const pending = pendingServerDiscovery;
-  if (pending && pending.token === token && pending.clientIdentifier === clientIdentifier) {
-    return pending.promise;
+  if (
+    pending &&
+    pending.token === token &&
+    pending.clientIdentifier === clientIdentifier
+  ) {
+    return await pending.promise;
   }
 
   const promise = discoverPlexServers(token, clientIdentifier);
-  pendingServerDiscovery = { token, clientIdentifier, promise };
+  pendingServerDiscovery = { clientIdentifier, promise, token };
   try {
     const servers = await promise;
     serverDiscoveryCache = {
-      token,
       clientIdentifier,
       expiresAt: Date.now() + SERVER_DISCOVERY_CACHE_TTL_MS,
       servers,
+      token,
     };
     return servers;
   } finally {
-    if (pendingServerDiscovery?.promise === promise) pendingServerDiscovery = null;
+    if (pendingServerDiscovery?.promise === promise) {
+      pendingServerDiscovery = null;
+    }
   }
-}
+};
 
-function artworkNamespaceForConfig(cfg: PlexConfig) {
-  if (!cfg.server) return null;
+const artworkNamespaceForConfig = (cfg: PlexConfig) => {
+  if (!cfg.server) {
+    return null;
+  }
   return artworkNamespace({
     accountUsername: cfg.account?.username,
     fallbackAccountId: cfg.clientIdentifier,
     serverClientIdentifier: cfg.server.clientIdentifier,
     serverUrl: cfg.server.url,
   });
-}
+};
 
-function accountArtworkNamespaceForConfig(cfg: PlexConfig) {
-  return artworkNamespace({
+const accountArtworkNamespaceForConfig = (cfg: PlexConfig) =>
+  artworkNamespace({
     accountUsername: cfg.account?.username,
     fallbackAccountId: cfg.clientIdentifier,
     serverClientIdentifier: "plex-account",
-    serverUrl: "https://plex.tv",
+    serverUrl: PLEX_TV_URL,
   });
-}
 
-function artworkSessionSnapshot() {
+const artworkSessionSnapshot = () => {
   const currentConfig = config;
   return {
-    config: currentConfig,
     client,
+    config: currentConfig,
     namespace: currentConfig ? artworkNamespaceForConfig(currentConfig) : null,
   };
-}
+};
 
-async function getArtwork(params: { path: string; variant?: ArtworkVariant }) {
-  if (typeof params.path !== "string" || !params.path.trim()) return null;
+const getArtwork = async (params: {
+  path: string;
+  variant?: ArtworkVariant;
+}) => {
+  if (!params.path.trim()) {
+    return null;
+  }
   const session = artworkSessionSnapshot();
   const cfg = session.config;
   const activeClient = session.client;
-  const namespace = session.namespace;
-  if (!cfg?.token || !cfg.server || !activeClient || !namespace) return null;
+  const { namespace } = session;
+  if (cfg === null || cfg.token === undefined || cfg.token.length === 0) {
+    return null;
+  }
+  if (cfg.server === undefined || activeClient === null || namespace === null) {
+    return null;
+  }
   const request = { namespace, source: params.path, variant: params.variant };
   const cached = await artworkCache.get(request);
-  if (!isSameArtworkSession(session, artworkSessionSnapshot())) return null;
+  if (!isSameArtworkSession(session, artworkSessionSnapshot())) {
+    return null;
+  }
   const entry = await artworkCache.getOrFetch(
     request,
-    createArtworkFetcher({ baseUrl: activeClient.baseUrl, token: activeClient.token }),
+    createArtworkFetcher({
+      baseUrl: activeClient.baseUrl,
+      token: activeClient.token,
+    })
   );
-  if (!isSameArtworkSession(session, artworkSessionSnapshot())) return null;
+  if (!isSameArtworkSession(session, artworkSessionSnapshot())) {
+    return null;
+  }
   return toArtworkRpcResult(entry, cached ? "hit" : "miss");
-}
+};
 
-function accountArtworkSource(path: string): string {
-  const input = path.trim();
-  if (!/^https?:\/\//i.test(input)) return input;
+const accountArtworkSource = (sourcePath: string): string => {
+  const input = sourcePath.trim();
+  if (!/^https?:\/\//iu.test(input)) {
+    return input;
+  }
   try {
     const url = new URL(input);
-    if (url.hostname.toLowerCase() === "plex.tv") {
+    if (url.hostname.toLowerCase() === PLEX_TV_HOST) {
       return `${url.pathname}${url.search}`;
     }
   } catch {
     return "";
   }
   return input;
-}
+};
 
-async function getAccountArtwork(params: { variant?: ArtworkVariant }) {
+const getAccountArtwork = async (params: { variant?: ArtworkVariant }) => {
   const session = artworkSessionSnapshot();
   const cfg = session.config;
-  if (!cfg?.token) return null;
-  const account = cfg.account?.thumb ? cfg.account : await hydrateAccount(cfg.token);
-  if (config?.token !== cfg.token || !account.thumb) return null;
+  if (cfg === null || cfg.token === undefined || cfg.token.length === 0) {
+    return null;
+  }
+  const account =
+    cfg.account?.thumb !== undefined && cfg.account.thumb.length > 0
+      ? cfg.account
+      : await hydrateAccount(cfg.token);
+  if (
+    config?.token !== cfg.token ||
+    account.thumb === undefined ||
+    account.thumb.length === 0
+  ) {
+    return null;
+  }
   const source = accountArtworkSource(account.thumb);
   const namespace = accountArtworkNamespaceForConfig(cfg);
-  if (!source) return null;
+  if (!source) {
+    return null;
+  }
   const request = { namespace, source, variant: params.variant };
   const cached = await artworkCache.get(request);
-  if (config?.token !== cfg.token) return null;
+  if (config?.token !== cfg.token) {
+    return null;
+  }
   const entry = await artworkCache.getOrFetch(
     request,
-    createArtworkFetcher({ baseUrl: "https://plex.tv", token: cfg.token }),
+    createArtworkFetcher({ baseUrl: PLEX_TV_URL, token: cfg.token })
   );
-  if (config?.token !== cfg.token) return null;
+  if (config?.token !== cfg.token) {
+    return null;
+  }
   return toArtworkRpcResult(entry, cached ? "hit" : "miss");
-}
+};
 
-async function beginAuth(): Promise<{ authUrl: string; pinCode: string }> {
-  if (authAttempt) throw new Error("An authorization flow is already in progress");
+const beginAuth = async (): Promise<{
+  authUrl: string;
+  pinCode: string;
+}> => {
+  if (authAttempt) {
+    throw new Error("An authorization flow is already in progress");
+  }
   const clientIdentifier = config?.clientIdentifier ?? randomUUID();
   const attempt: AuthAttempt = {
-    id: ++nextAuthAttemptId,
-    clientIdentifier,
     abort: new AbortController(),
+    clientIdentifier,
+    id: nextAuthAttemptId,
   };
   authAttempt = attempt;
   authError = null;
+  nextAuthAttemptId += 1;
 
   let pin: PlexPin;
   try {
-    pin = await createPin(clientIdentifier, "https://plex.tv", attempt.abort.signal);
+    pin = await createPin(clientIdentifier, PLEX_TV_URL, attempt.abort.signal);
     if (!isCurrentAuthAttempt(attempt)) {
       throw new DOMException("Aborted", "AbortError");
     }
   } catch (error) {
-    if (authAttempt?.id === attempt.id) authAttempt = null;
+    if (authAttempt?.id === attempt.id) {
+      authAttempt = null;
+    }
     throw error;
   }
 
   // Background poll; resolves when the user authorizes at app.plex.tv.
   void (async () => {
     try {
-      const token = await waitForPin(pin, "https://plex.tv", {
-        signal: attempt.abort.signal,
+      const token = await waitForPin(pin, PLEX_TV_URL, {
         onPoll: () => {
           // The view shows the "Waiting for authorization…" spinner; nothing to push.
         },
+        signal: attempt.abort.signal,
       });
-      if (!isCurrentAuthAttempt(attempt)) return;
+      if (!isCurrentAuthAttempt(attempt)) {
+        return;
+      }
 
       // Persist the token as soon as Plex approves the PIN. Account hydration
       // is best-effort here; the renderer retries it before showing the
@@ -232,93 +305,161 @@ async function beginAuth(): Promise<{ authUrl: string; pinCode: string }> {
       saveConfig(config);
       // The PIN attempt is complete once the token is persisted. Do not
       // make the auth screen depend on the separate account request.
-      if (authAttempt?.id === attempt.id) authAttempt = null;
+      if (authAttempt?.id === attempt.id) {
+        authAttempt = null;
+      }
       try {
         await hydrateAccount(token);
       } catch (error) {
-        console.error("Failed to hydrate Plex account after authorization:", error);
+        console.error(
+          "Failed to hydrate Plex account after authorization:",
+          error
+        );
       }
     } catch (error) {
       // Aborted (cancelAuth) or a stale retry: leave config untouched.
-      if (isCurrentAuthAttempt(attempt) && (error as Error)?.name !== "AbortError") {
-        authError = errorMessage(error);
+      const errorName =
+        error instanceof Error || error instanceof DOMException
+          ? error.name
+          : undefined;
+      if (isCurrentAuthAttempt(attempt) && errorName !== "AbortError") {
+        authError =
+          error instanceof Error ? errorMessage(error) : String(error);
         console.error("Plex auth failed:", error);
       }
     } finally {
-      if (authAttempt?.id === attempt.id) authAttempt = null;
+      if (authAttempt?.id === attempt.id) {
+        authAttempt = null;
+      }
     }
   })();
 
   return { authUrl: buildAuthUrl(pin), pinCode: pin.code };
-}
+};
 
-function cancelAuth(): void {
+const cancelAuth = (): void => {
   const attempt = authAttempt;
   authAttempt = null;
   authError = null;
   attempt?.abort.abort();
-}
+};
 
-async function hydrateAccount(token: string): Promise<PlexAccount> {
-  const account = await getPlexAccount(token);
-  if (config?.token === token) {
-    config = { ...config, account };
-    saveConfig(config);
-  }
-  return account;
-}
-
-async function selectServer(params: { clientIdentifier: string }): Promise<void> {
+const selectServer = async (params: {
+  clientIdentifier: string;
+}): Promise<void> => {
   const cfg = config;
-  if (!cfg?.token) throw new Error("Not authenticated");
+  if (cfg === null || cfg.token === undefined || cfg.token.length === 0) {
+    throw new Error("Not authenticated");
+  }
   // Reuse the recent server list from the picker instead of probing every
   // connection a second time during selection.
   const servers = await discoverServersCached(cfg.token, cfg.clientIdentifier);
-  if (config?.token !== cfg.token || config?.clientIdentifier !== cfg.clientIdentifier) {
+  if (
+    config?.token !== cfg.token ||
+    config?.clientIdentifier !== cfg.clientIdentifier
+  ) {
     throw new Error("Authentication state changed while loading servers");
   }
-  const server = servers.find((s) => s.clientIdentifier === params.clientIdentifier);
-  if (!server) throw new Error(`Unknown server: ${params.clientIdentifier}`);
-  if (!server.url) throw new Error(`Server "${server.name}" has no usable connection`);
+  const server = servers.find(
+    (s) => s.clientIdentifier === params.clientIdentifier
+  );
+  if (!server) {
+    throw new Error(`Unknown server: ${params.clientIdentifier}`);
+  }
+  if (!server.url) {
+    throw new Error(`Server "${server.name}" has no usable connection`);
+  }
   const next: PlexConfig = {
     ...cfg,
     server: {
       clientIdentifier: server.clientIdentifier,
       name: server.name,
-      url: server.url,
       token: server.token,
+      url: server.url,
     },
   };
   config = next;
   saveConfig(next);
   client = new PlexClient({
-    url: server.url,
-    token: server.token,
     clientIdentifier: cfg.clientIdentifier,
+    token: server.token,
+    url: server.url,
   });
-}
+};
 
-async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary | undefined> {
-  if (!cfg.server || !cfg.token) return undefined;
+/** Replace a stale active URL with the reachable connection selected by discovery. */
+const syncActiveServer = (cfg: PlexConfig, selected: PlexServerInfo): void => {
+  if (!selected.online || !selected.url) {
+    return;
+  }
+  if (
+    config?.token !== cfg.token ||
+    config.clientIdentifier !== cfg.clientIdentifier
+  ) {
+    return;
+  }
+
+  const nextServer = {
+    clientIdentifier: selected.clientIdentifier,
+    name: selected.name,
+    token: selected.token,
+    url: selected.url,
+  };
+  const activeServer = config.server;
+  const needsRefresh =
+    !activeServer || savedServerNeedsRefresh(activeServer, selected);
+  if (needsRefresh) {
+    config = { ...config, server: nextServer };
+    saveConfig(config);
+  }
+  if (
+    needsRefresh ||
+    !client ||
+    client.baseUrl !== selected.url ||
+    client.token !== selected.token
+  ) {
+    client = new PlexClient({
+      clientIdentifier: cfg.clientIdentifier,
+      token: selected.token,
+      url: selected.url,
+    });
+  }
+};
+
+const getSavedServerSummary = async (
+  cfg: PlexConfig
+): Promise<ServerViewSummary | undefined> => {
+  if (!cfg.server || !cfg.token) {
+    return undefined;
+  }
 
   const fallback: ServerViewSummary = {
-    name: cfg.server.name,
     clientIdentifier: cfg.server.clientIdentifier ?? cfg.clientIdentifier,
+    name: cfg.server.name,
     url: cfg.server.url,
   };
 
   try {
-    const discovered = await discoverServersCached(cfg.token, cfg.clientIdentifier);
+    const discovered = await discoverServersCached(
+      cfg.token,
+      cfg.clientIdentifier
+    );
     const selected = findPersistedServer(cfg.server, discovered);
-    if (!selected) return fallback;
+    if (!selected) {
+      return fallback;
+    }
 
     // Migrate configs written before the server resource identifier was stored.
-    if (
-      !cfg.server.clientIdentifier &&
-      config?.token === cfg.token &&
-      config.clientIdentifier === cfg.clientIdentifier &&
-      config.server?.url === cfg.server.url
-    ) {
+    const hasServerIdentifier =
+      cfg.server.clientIdentifier !== undefined &&
+      cfg.server.clientIdentifier.length > 0;
+    const currentConfig = config;
+    const isCurrentServer =
+      currentConfig !== null &&
+      currentConfig.token === cfg.token &&
+      currentConfig.clientIdentifier === cfg.clientIdentifier &&
+      currentConfig.server?.url === cfg.server.url;
+    if (!hasServerIdentifier && isCurrentServer) {
       config = {
         ...cfg,
         server: { ...cfg.server, clientIdentifier: selected.clientIdentifier },
@@ -336,93 +477,106 @@ async function getSavedServerSummary(cfg: PlexConfig): Promise<ServerViewSummary
     }
 
     return {
-      name: selected.name,
       clientIdentifier: selected.clientIdentifier,
-      url: selected.url,
       local: selected.local,
+      name: selected.name,
       online: selected.online,
+      url: selected.url,
     };
   } catch (error) {
     console.error("Failed to refresh the saved Plex server:", error);
     return fallback;
   }
-}
+};
 
-/** Replace a stale active URL with the reachable connection selected by discovery. */
-function syncActiveServer(cfg: PlexConfig, selected: PlexServerInfo): void {
-  if (!selected.online || !selected.url) return;
-  if (config?.token !== cfg.token || config.clientIdentifier !== cfg.clientIdentifier) return;
-
-  const nextServer = {
-    clientIdentifier: selected.clientIdentifier,
-    name: selected.name,
-    url: selected.url,
-    token: selected.token,
-  };
-  const currentServer = config.server;
-  const needsRefresh = !currentServer || savedServerNeedsRefresh(currentServer, selected);
-  if (needsRefresh) {
-    config = { ...config, server: nextServer };
-    saveConfig(config);
-  }
-  if (
-    needsRefresh ||
-    !client ||
-    client.baseUrl !== selected.url ||
-    client.token !== selected.token
-  ) {
-    client = new PlexClient({
-      url: selected.url,
-      token: selected.token,
-      clientIdentifier: cfg.clientIdentifier,
-    });
-  }
-}
-
-async function disconnect(): Promise<void> {
+const disconnect = async (): Promise<void> => {
   cancelAuth();
   const session = artworkSessionSnapshot();
   if (session.namespace) {
     await artworkCache.clearNamespace(session.namespace);
-    if (!isSameArtworkSession(session, artworkSessionSnapshot())) return;
+    if (!isSameArtworkSession(session, artworkSessionSnapshot())) {
+      return;
+    }
   }
   client = null;
   config = null;
   deleteConfig();
-}
+};
 
-function currentServer() {
-  if (!config?.server) return undefined;
+const currentServer = ():
+  | Pick<PlexServerInfo, "clientIdentifier" | "name" | "token" | "url">
+  | undefined => {
+  if (config?.server === undefined) {
+    return undefined;
+  }
   return {
-    name: config.server.name,
-    url: config.server.url,
-    token: config.server.token,
     clientIdentifier: config.server.clientIdentifier ?? config.clientIdentifier,
+    name: config.server.name,
+    token: config.server.token,
+    url: config.server.url,
   };
-}
+};
 
 const rpc = BrowserView.defineRPC<PlexRpc>({
-  maxRequestTime: 60_000,
   handlers: {
     requests: {
       async beginAuth() {
-        return beginAuth();
+        return await beginAuth();
       },
       cancelAuth() {
         cancelAuth();
       },
-      selectServer(params) {
-        return selectServer(params);
+      async checkServerStatus() {
+        const server = currentServer();
+        if (!server) {
+          return false;
+        }
+        return await checkPlexServerStatus(server.url, server.token);
       },
-      async getAuthState() {
+      clipboardWriteText(params) {
+        Utils.clipboardWriteText(params.text);
+      },
+      async disconnect() {
+        await disconnect();
+      },
+      async getAccount() {
+        if (
+          config === null ||
+          config.token === undefined ||
+          config.token.length === 0
+        ) {
+          throw new Error("Not authenticated");
+        }
+        return await hydrateAccount(config.token);
+      },
+      async getAccountArtwork(params) {
+        return await getAccountArtwork(params);
+      },
+      async getAlbum(params) {
+        return await requireClient().getAlbum(params.ratingKey);
+      },
+      async getAlbums(params) {
+        return await requireClient().getAlbums(params.sectionKey, params.opts);
+      },
+      async getArtist(params) {
+        return await requireClient().getArtist(params.ratingKey);
+      },
+      async getArtists(params) {
+        return await requireClient().getArtists(params.sectionKey, params.opts);
+      },
+      async getArtwork(params) {
+        return await getArtwork(params);
+      },
+      getAuthState() {
         const cfg = config;
         // Auth state is local and should be available immediately. Do not make
         // startup wait for server discovery and its 3s reachability probes.
         const server =
           cfg?.server && cfg.token
             ? {
+                clientIdentifier:
+                  cfg.server.clientIdentifier ?? cfg.clientIdentifier,
                 name: cfg.server.name,
-                clientIdentifier: cfg.server.clientIdentifier ?? cfg.clientIdentifier,
                 url: cfg.server.url,
               }
             : undefined;
@@ -432,115 +586,98 @@ const rpc = BrowserView.defineRPC<PlexRpc>({
           void getSavedServerSummary(cfg);
         }
         return {
-          authenticated: Boolean(cfg?.token),
-          hasServer: Boolean(server),
-          authenticating: Boolean(authAttempt),
-          authError: authError ?? undefined,
           account: cfg?.account,
+          authError: authError ?? undefined,
+          authenticated: Boolean(cfg?.token),
+          authenticating: Boolean(authAttempt),
+          hasServer: Boolean(server),
           server,
         };
       },
-      disconnect() {
-        return disconnect();
+      async getHomeHubItems(params) {
+        return await requireClient().getHomeHubItems(params.key);
       },
-      async getAccount() {
-        if (!config?.token) throw new Error("Not authenticated");
-        return hydrateAccount(config.token);
+      async getHomeHubs(params) {
+        return await requireClient().getHomeHubs(params.identifiers);
+      },
+      async getMostPlayed(params) {
+        return await requireClient().getMostPlayed(params.sinceMs);
+      },
+      async getMusicSections() {
+        return await requireClient().getMusicSections();
+      },
+      async getPlaylist(params) {
+        return await requireClient().getPlaylist(params.key);
+      },
+      async getPlaylists() {
+        return await requireClient().getMusicPlaylists();
+      },
+      async getRecentlyPlayed() {
+        return await requireClient().getRecentlyPlayed();
       },
       async getServers() {
         const cfg = config;
-        if (!cfg?.token) return [];
-        const servers = await discoverServersCached(cfg.token, cfg.clientIdentifier);
-        const selected = cfg.server ? findPersistedServer(cfg.server, servers) : undefined;
-        if (selected) syncActiveServer(cfg, selected);
+        if (cfg === null || cfg.token === undefined || cfg.token.length === 0) {
+          return [];
+        }
+        const servers = await discoverServersCached(
+          cfg.token,
+          cfg.clientIdentifier
+        );
+        const selected = cfg.server
+          ? findPersistedServer(cfg.server, servers)
+          : undefined;
+        if (selected) {
+          syncActiveServer(cfg, selected);
+        }
         return servers.map((server) => ({
-          name: server.name,
           clientIdentifier: server.clientIdentifier,
-          url: server.url,
           local: server.local,
+          name: server.name,
           online: server.online,
+          url: server.url,
         }));
       },
-      async checkServerStatus() {
-        const server = currentServer();
-        if (!server) return false;
-        return checkPlexServerStatus(server.url, server.token);
-      },
-      getMusicSections() {
-        return requireClient().getMusicSections();
-      },
-      getArtists(params) {
-        return requireClient().getArtists(params.sectionKey, params.opts);
-      },
-      getAlbums(params) {
-        return requireClient().getAlbums(params.sectionKey, params.opts);
-      },
-      getTracks(params) {
-        return requireClient().getTracks(params.sectionKey, params.opts);
-      },
-      getPlaylists() {
-        return requireClient().getMusicPlaylists();
-      },
-      getAlbum(params) {
-        return requireClient().getAlbum(params.ratingKey);
-      },
-      getPlaylist(params) {
-        return requireClient().getPlaylist(params.key);
-      },
-      getArtist(params) {
-        return requireClient().getArtist(params.ratingKey);
-      },
-      getHomeHubs(params) {
-        return requireClient().getHomeHubs(params.identifiers);
-      },
-      getHomeHubItems(params) {
-        return requireClient().getHomeHubItems(params.key);
-      },
-      getRecentlyPlayed() {
-        return requireClient().getRecentlyPlayed();
-      },
-      getMostPlayed(params) {
-        return requireClient().getMostPlayed(params.sinceMs);
-      },
-      search(params) {
-        return requireClient().search(params.query);
-      },
-      async streamUrl(params) {
-        const c = requireClient();
-        const { items } = await c.getMetadata<PlexTrack>(params.ratingKey);
-        const track = items.find((i) => i.type === "track");
-        return resolveStreamUrl({ baseUrl: c.baseUrl, token: c.token }, track);
-      },
-      getArtwork(params) {
-        return getArtwork(params);
-      },
-      getAccountArtwork(params) {
-        return getAccountArtwork(params);
-      },
-      scrobble(params) {
-        return requireClient().scrobble(params.key);
+      async getTracks(params) {
+        return await requireClient().getTracks(params.sectionKey, params.opts);
       },
       openExternal(params) {
         Utils.openExternal(params.url);
       },
-      clipboardWriteText(params) {
-        Utils.clipboardWriteText(params.text);
+      async scrobble(params) {
+        await requireClient().scrobble(params.key);
+      },
+      async search(params) {
+        return await requireClient().search(params.query);
+      },
+      async selectServer(params) {
+        await selectServer(params);
+      },
+      async streamUrl(params) {
+        const c = requireClient();
+        const { items } = await c.getMetadata(params.ratingKey);
+        const track = items.find(
+          (item): item is PlexTrack => item.type === "track"
+        );
+        return resolveStreamUrl({ baseUrl: c.baseUrl, token: c.token }, track);
       },
     },
   },
+  maxRequestTime: 60_000,
 });
 
-new BrowserWindow({
-  title: "Hanoi",
-  url: "views://mainview/index.html",
+const mainWindow = new BrowserWindow({
   frame: {
-    width: 1200,
     height: 800,
+    width: 1200,
     x: 200,
     y: 200,
   },
   rpc,
+  title: "Hanoi",
+  url: "views://mainview/index.html",
 });
+void mainWindow;
 
 process.once("exit", () => {
   artworkCache.dispose();

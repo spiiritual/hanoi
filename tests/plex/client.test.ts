@@ -1,76 +1,77 @@
 import { expect, test } from "bun:test";
+
 import {
   composeHomeHubs,
   PlexClient,
   replaceRecentlyPlayedPreview,
 } from "../../src/bun/plex/client.ts";
 
-test("home hubs combine populated music-section rows with audio playlists", async () => {
+test("home hubs combine populated music-section rows with audio playlists", () => {
   const sectionHubs = [
     {
-      title: "Recently Played Music",
-      hubIdentifier: "music.recent.played.1",
       Metadata: [
         {
-          ratingKey: "artist-1",
           key: "/library/metadata/artist-1",
-          type: "artist",
+          ratingKey: "artist-1",
           title: "Artist",
+          type: "artist",
         },
       ],
+      hubIdentifier: "music.recent.played.1",
+      title: "Recently Played Music",
     },
     {
-      title: "Recently Added in Music",
-      hubIdentifier: "music.recent.added.1",
       Metadata: [
         {
-          ratingKey: "album-1",
           key: "/library/metadata/album-1",
-          type: "album",
-          title: "Album",
           parentTitle: "Artist",
+          ratingKey: "album-1",
+          title: "Album",
+          type: "album",
         },
       ],
+      hubIdentifier: "music.recent.added.1",
+      title: "Recently Added in Music",
     },
     {
-      title: "Recently Added Movies",
-      hubIdentifier: "movie.recent",
       Metadata: [
         {
-          ratingKey: "movie-1",
           key: "/library/metadata/movie-1",
-          type: "movie",
+          ratingKey: "movie-1",
           title: "Movie",
+          type: "movie",
         },
       ],
+      hubIdentifier: "movie.recent",
+      title: "Recently Added Movies",
     },
   ];
   const globalHubs = [
     {
-      title: "Recently Added Music",
-      hubIdentifier: "home.music.recent.added",
       Metadata: [
         {
-          ratingKey: "album-1",
           key: "/library/metadata/album-1",
-          type: "album",
-          title: "Duplicate album row",
           parentTitle: "Artist",
+          ratingKey: "album-1",
+          title: "Duplicate album row",
+          type: "album",
         },
       ],
+      hubIdentifier: "home.music.recent.added",
+      title: "Recently Added Music",
     },
     {
-      title: "Recent Playlists",
-      hubIdentifier: "home.playlists",
       Metadata: [
         {
-          ratingKey: "playlist-1",
           key: "/playlists/playlist-1/items",
-          type: "playlist",
-          title: "Road trip",
           playlistType: "audio",
+          ratingKey: "playlist-1",
+          title: "Road trip",
+          type: "playlist",
         },
       ],
+      hubIdentifier: "home.playlists",
+      title: "Recent Playlists",
     },
   ];
 
@@ -85,69 +86,69 @@ test("home hubs combine populated music-section rows with audio playlists", asyn
 test("recently played Home preview uses mixed artist, album, and track items", () => {
   const hubs = [
     {
-      title: "Recently Played Music",
-      hubIdentifier: "music.recent.played.1",
       Metadata: [
         {
-          ratingKey: "artist-preview",
           key: "/library/metadata/artist-preview",
-          type: "artist",
+          ratingKey: "artist-preview",
           title: "Artist preview",
+          type: "artist",
         },
       ],
+      hubIdentifier: "music.recent.played.1",
+      title: "Recently Played Music",
     },
     {
-      title: "Recently Added in Music",
-      hubIdentifier: "music.recent.added.1",
       Metadata: [],
+      hubIdentifier: "music.recent.added.1",
+      title: "Recently Added in Music",
     },
   ];
   const recentItems = [
     {
-      ratingKey: "artist-1",
       key: "/library/metadata/artist-1",
-      type: "artist",
+      ratingKey: "artist-1",
       title: "Artist",
-    },
-    {
-      ratingKey: "album-1",
-      key: "/library/metadata/album-1",
-      type: "album",
-      title: "Album",
-      parentTitle: "Artist",
-    },
-    {
-      ratingKey: "track-1",
-      key: "/library/metadata/track-1",
-      type: "track",
-      title: "Track",
-      parentTitle: "Album",
-      grandparentTitle: "Artist",
-    },
-    {
-      ratingKey: "artist-2",
-      key: "/library/metadata/artist-2",
       type: "artist",
-      title: "Another artist",
     },
     {
-      ratingKey: "album-2",
-      key: "/library/metadata/album-2",
+      key: "/library/metadata/album-1",
+      parentTitle: "Artist",
+      ratingKey: "album-1",
+      title: "Album",
       type: "album",
-      title: "Another album",
-      parentTitle: "Another artist",
     },
     {
-      ratingKey: "track-2",
-      key: "/library/metadata/track-2",
+      grandparentTitle: "Artist",
+      key: "/library/metadata/track-1",
+      parentTitle: "Album",
+      ratingKey: "track-1",
+      title: "Track",
       type: "track",
-      title: "Another track",
     },
     {
-      ratingKey: "album-3",
-      key: "/library/metadata/album-3",
+      key: "/library/metadata/artist-2",
+      ratingKey: "artist-2",
+      title: "Another artist",
+      type: "artist",
+    },
+    {
+      key: "/library/metadata/album-2",
+      parentTitle: "Another artist",
+      ratingKey: "album-2",
+      title: "Another album",
       type: "album",
+    },
+    {
+      key: "/library/metadata/track-2",
+      ratingKey: "track-2",
+      title: "Another track",
+      type: "track",
+    },
+    {
+      key: "/library/metadata/album-3",
+      ratingKey: "album-3",
       title: "Outside preview",
+      type: "album",
     },
   ];
 
@@ -165,46 +166,54 @@ test("recently played Home preview uses mixed artist, album, and track items", (
   expect(replaced[1]).toEqual(hubs[1]);
 });
 
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (input instanceof Request) {
+    return input.url;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
+  return input;
+};
+
 test("home hub item requests load the full category from Plex's hub key", async () => {
   const originalFetch = globalThis.fetch;
   const requestedUrls: string[] = [];
   globalThis.fetch = Object.assign(
     async (input: Parameters<typeof fetch>[0]) => {
-      let requestedUrl: string;
-      if (typeof input === "string") {
-        requestedUrl = input;
-      } else if (input instanceof URL) {
-        requestedUrl = input.href;
-      } else {
-        requestedUrl = input.url;
-      }
-      requestedUrls.push(requestedUrl);
+      await Promise.resolve();
+      requestedUrls.push(requestUrl(input));
       return Response.json({
         MediaContainer: {
-          size: 2,
           Metadata: [
             {
-              ratingKey: "album-1",
               key: "/library/metadata/album-1",
-              type: "album",
+              ratingKey: "album-1",
               title: "Album one",
+              type: "album",
             },
             {
-              ratingKey: "album-2",
               key: "/library/metadata/album-2",
-              type: "album",
+              ratingKey: "album-2",
               title: "Album two",
+              type: "album",
             },
           ],
+          size: 2,
         },
       });
     },
-    { preconnect: originalFetch.preconnect },
+    { preconnect: originalFetch.preconnect }
   );
 
   try {
-    const client = new PlexClient({ url: "http://plex.test", token: "test-token" });
-    const items = await client.getHomeHubItems("/library/sections/1/all?type=9&sort=addedAt:desc");
+    const client = new PlexClient({
+      token: "test-token",
+      url: "http://plex.test",
+    });
+    const items = await client.getHomeHubItems(
+      "/library/sections/1/all?type=9&sort=addedAt:desc"
+    );
     expect(items.map((item) => item.title)).toEqual(["Album one", "Album two"]);
     expect(requestedUrls).toEqual([
       "http://plex.test/library/sections/1/all?type=9&sort=addedAt:desc",

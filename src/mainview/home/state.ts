@@ -9,21 +9,23 @@ export interface HomeStateSnapshot {
 }
 
 export interface HomeState {
-  getSnapshot(this: void): HomeStateSnapshot;
-  subscribe(this: void, listener: (snapshot: HomeStateSnapshot) => void): () => void;
-  setServer(clientIdentifier: string | null): void;
-  loadHomeHubs(): Promise<PlexHub[]>;
+  getSnapshot: () => HomeStateSnapshot;
+  subscribe: (listener: (snapshot: HomeStateSnapshot) => void) => () => void;
+  setServer: (clientIdentifier: string | null) => void;
+  loadHomeHubs: () => Promise<PlexHub[]>;
 }
 
 interface HomeStateOptions {
   loadHomeHubs: () => Promise<PlexHub[]>;
 }
 
-export function createHomeState({ loadHomeHubs }: HomeStateOptions): HomeState {
+export const createHomeState = ({
+  loadHomeHubs,
+}: HomeStateOptions): HomeState => {
   let state: HomeStateSnapshot = {
+    error: null,
     hubs: [],
     status: "idle",
-    error: null,
   };
   let selectedServer: string | null = null;
   let requestGeneration = 0;
@@ -35,66 +37,79 @@ export function createHomeState({ loadHomeHubs }: HomeStateOptions): HomeState {
 
   const notify = (): void => {
     stableSnapshot = { ...state, hubs: [...state.hubs] };
-    for (const listener of listeners) listener(stableSnapshot);
+    for (const listener of listeners) {
+      listener(stableSnapshot);
+    }
   };
 
   return {
     getSnapshot: snapshot,
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    setServer(clientIdentifier) {
-      if (selectedServer === clientIdentifier) return;
-      selectedServer = clientIdentifier;
-      requestGeneration += 1;
-      homeHubsPromise = null;
-      state = {
-        hubs: [],
-        status: "idle",
-        error: null,
-      };
-      notify();
-    },
-    loadHomeHubs() {
-      if (state.status === "ready") return Promise.resolve([...state.hubs]);
-      if (homeHubsPromise) return homeHubsPromise;
+    loadHomeHubs: async () => {
+      if (state.status === "ready") {
+        return [...state.hubs];
+      }
+      if (homeHubsPromise) {
+        return await homeHubsPromise;
+      }
       if (selectedServer === null) {
         const error = new Error("No Plex server selected");
-        state = { ...state, status: "error", error: error.message };
+        state = { ...state, error: error.message, status: "error" };
         notify();
-        return Promise.reject(error);
+        throw error;
       }
 
       const generation = requestGeneration;
       const server = selectedServer;
-      state = { ...state, status: "loading", error: null };
+      state = { ...state, error: null, status: "loading" };
       notify();
 
-      const request = loadHomeHubs()
-        .then((hubs) => {
+      const request = (async (): Promise<PlexHub[]> => {
+        try {
+          const hubs = await loadHomeHubs();
           if (generation === requestGeneration && selectedServer === server) {
             state = {
+              error: null,
               hubs: [...hubs],
               status: "ready",
-              error: null,
             };
             notify();
           }
           return hubs;
-        })
-        .catch((cause: unknown) => {
+        } catch (error: unknown) {
           if (generation === requestGeneration && selectedServer === server) {
             const message =
-              cause instanceof Error ? cause.message : "Failed to load Plex home hubs";
-            state = { ...state, status: "error", error: message };
+              error instanceof Error
+                ? error.message
+                : "Failed to load Plex home hubs";
+            state = { ...state, error: message, status: "error" };
             homeHubsPromise = null;
             notify();
           }
-          throw cause;
-        });
+          throw error;
+        }
+      })();
       homeHubsPromise = request;
-      return request;
+      return await request;
+    },
+    setServer(clientIdentifier) {
+      if (selectedServer === clientIdentifier) {
+        return;
+      }
+      selectedServer = clientIdentifier;
+      requestGeneration += 1;
+      homeHubsPromise = null;
+      state = {
+        error: null,
+        hubs: [],
+        status: "idle",
+      };
+      notify();
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
   };
-}
+};

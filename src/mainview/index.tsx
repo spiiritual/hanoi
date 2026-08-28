@@ -1,19 +1,34 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { AuthFlow, type AuthCompletion, type AuthStage } from "./auth/AuthFlow.tsx";
-import { HomeScreen } from "./home/HomeScreen.tsx";
-import { appState } from "./view-state.ts";
+
+import { AuthFlow } from "./auth/auth-flow.tsx";
+import type { AuthCompletion, AuthStage } from "./auth/auth-flow.tsx";
+import { HomeScreen } from "./home/home-screen.tsx";
 import type { Account, Server } from "./types.ts";
+import { appState } from "./view-state.ts";
 
 type AppView = "auth" | "home";
-type AppTransition = {
-  from: AppView;
+interface AppTransition {
   direction: "forward" | "backward";
-};
+  from: AppView;
+}
 
 const APP_TRANSITION_MS = 420;
 
-function App() {
+const screenClassName = (
+  screen: AppView,
+  view: AppView,
+  transition: AppTransition | null
+): string => {
+  const baseClassName = screen === "home" ? "screen app-screen" : "screen";
+  if (transition === null) {
+    return view === screen ? baseClassName : `${baseClassName} is-hidden`;
+  }
+  const transitionType = transition.from === screen ? "exit" : "enter";
+  return `${baseClassName} app-transition-${transitionType}-${transition.direction}`;
+};
+
+const App = () => {
   const [view, setView] = useState<AppView>("auth");
   const [authStartStage, setAuthStartStage] = useState<AuthStage>("welcome");
   const [account, setAccount] = useState<Account | null>(null);
@@ -23,62 +38,50 @@ function App() {
   const viewRef = useRef(view);
   const transitionTimer = useRef<number | null>(null);
 
-  const navigate = useCallback((next: AppView) => {
-    const current = viewRef.current;
-    if (next === current) return;
+  const navigate = (next: AppView): void => {
+    const { current } = viewRef;
+    if (next === current) {
+      return;
+    }
     if (transitionTimer.current !== null) {
       window.clearTimeout(transitionTimer.current);
     }
     viewRef.current = next;
     setTransition({
-      from: current,
       direction: next === "home" ? "forward" : "backward",
+      from: current,
     });
     setView(next);
     transitionTimer.current = window.setTimeout(() => {
       setTransition(null);
       transitionTimer.current = null;
     }, APP_TRANSITION_MS + 30);
-  }, []);
+  };
 
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => (): void => {
       if (transitionTimer.current !== null) {
         window.clearTimeout(transitionTimer.current);
       }
-    };
-  }, []);
+    },
+    []
+  );
 
-  const startAuth = useCallback(() => {
+  const startAuth = (): void => {
     setAuthStartStage("oauth");
     setAuthSession((session) => session + 1);
     navigate("auth");
-  }, [navigate]);
+  };
 
-  const completeAuth = useCallback(
-    (completion: AuthCompletion) => {
-      setAccount(completion.account);
-      setServers(completion.servers);
-      appState.setSelectedServer(completion.selectedServer);
-      navigate("home");
-    },
-    [navigate],
-  );
+  const completeAuth = (completion: AuthCompletion): void => {
+    setAccount(completion.account);
+    setServers(completion.servers);
+    appState.setSelectedServer(completion.selectedServer);
+    navigate("home");
+  };
 
-  const authClassName = transition
-    ? transition.from === "auth"
-      ? `screen app-transition-exit-${transition.direction}`
-      : `screen app-transition-enter-${transition.direction}`
-    : view === "auth"
-      ? "screen"
-      : "screen is-hidden";
-  const homeClassName = transition
-    ? transition.from === "home"
-      ? `screen app-screen app-transition-exit-${transition.direction}`
-      : `screen app-screen app-transition-enter-${transition.direction}`
-    : view === "home"
-      ? "screen app-screen"
-      : "screen app-screen is-hidden";
+  const authClassName = screenClassName("auth", view, transition);
+  const homeClassName = screenClassName("home", view, transition);
 
   return (
     <main className="app">
@@ -99,6 +102,10 @@ function App() {
       </section>
     </main>
   );
-}
+};
 
-createRoot(document.getElementById("app")!).render(<App />);
+const appRoot = document.querySelector("#app");
+if (appRoot === null) {
+  throw new Error("The app root element is missing");
+}
+createRoot(appRoot).render(<App />);

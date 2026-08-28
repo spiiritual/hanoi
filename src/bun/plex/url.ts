@@ -12,9 +12,8 @@ export interface PlexUrlSource {
   token: string;
 }
 
-function withToken(url: string, token: string): string {
-  return `${url}${url.includes("?") ? "&" : "?"}X-Plex-Token=${token}`;
-}
+const withToken = (url: string, token: string): string =>
+  `${url}${url.includes("?") ? "&" : "?"}X-Plex-Token=${token}`;
 
 /**
  * Audio URL for `<audio src>`: the first playable `Media` part's key resolved
@@ -22,12 +21,14 @@ function withToken(url: string, token: string): string {
  * media/part. The URL carries the token so the audio element can stream
  * directly from the server without proxying bytes through the main process.
  */
-export function streamUrl(
+export const streamUrl = (
   source: PlexUrlSource,
-  track: Pick<PlexTrack, "Media"> | undefined | null,
-): string | null {
+  track: Pick<PlexTrack, "Media"> | undefined | null
+): string | null => {
   const part = track?.Media?.[0]?.Part?.[0];
   const key = part?.key;
-  if (!key) return null;
+  if (key === undefined || key.length === 0) {
+    return null;
+  }
   return withToken(`${source.baseUrl}${key}`, source.token);
-}
+};

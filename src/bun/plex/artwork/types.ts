@@ -47,6 +47,7 @@ export interface ArtworkFetchResponse {
   status?: number;
   /** Set for a conditional request that received HTTP 304. */
   notModified?: boolean;
+  // oxlint-disable-next-line sonarjs/max-union-size -- the transport accepts each native body representation
   body?: ArrayBuffer | Uint8Array | Blob | ReadableStream<Uint8Array>;
   contentType?: string;
   etag?: string;
@@ -54,7 +55,7 @@ export interface ArtworkFetchResponse {
 }
 
 export type ArtworkFetcher = (
-  request: ArtworkFetchRequest,
+  request: ArtworkFetchRequest
 ) => Promise<ArtworkFetchResponse | Response>;
 
 /** A validated object returned by the cache. `data` contains image bytes. */
