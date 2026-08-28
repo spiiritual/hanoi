@@ -1,9 +1,11 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PlexPlaylist, PlexTrack } from "../../bun/plex/types.ts";
 import { Icon } from "../components/Icon.tsx";
+import type { ShellView } from "../app-state.ts";
 import { plex } from "../plex.ts";
 import { ArtworkImage } from "../artwork/ArtworkImage.tsx";
 import { playerState } from "../view-state.ts";
+import { MediaCard } from "../home/HomeContent.tsx";
 
 function formatTrackDuration(duration?: number): string {
   if (!duration || duration < 0) return "--:--";
@@ -31,6 +33,22 @@ function trackSubtitle(track: PlexTrack): string {
   );
 }
 
+function playlistMeta(playlist: PlexPlaylist): string {
+  const type = playlist.playlistType === "audio" ? "Playlist" : playlist.playlistType;
+  const songs =
+    playlist.leafCount === undefined
+      ? undefined
+      : `${playlist.leafCount} song${playlist.leafCount === 1 ? "" : "s"}`;
+  return [type, songs].filter(Boolean).join(" · ") || "Playlist";
+}
+
+const libraryTabs: Array<[ShellView, string]> = [
+  ["albums", "Albums"],
+  ["artists", "Artists"],
+  ["songs", "Songs"],
+  ["playlists", "Playlists"],
+];
+
 function PlaylistArtwork({ playlist, className }: { playlist: PlexPlaylist; className: string }) {
   return (
     <div className={className} aria-label={`${playlist.title} cover art`}>
@@ -40,6 +58,122 @@ function PlaylistArtwork({ playlist, className }: { playlist: PlexPlaylist; clas
         alt={`${playlist.title} cover`}
         fallback={playlist.title.charAt(0).toUpperCase() || "♪"}
       />
+    </div>
+  );
+}
+
+export function PlaylistLibrary({
+  serverKey,
+  onPlaylist,
+  onView,
+}: {
+  serverKey: string | null;
+  onPlaylist: (playlist: PlexPlaylist) => void;
+  onView: (view: ShellView) => void;
+}) {
+  const [playlists, setPlaylists] = useState<PlexPlaylist[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    if (!serverKey) {
+      setStatus("idle");
+      setError(null);
+      setPlaylists([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    setStatus("loading");
+    setError(null);
+    void plex
+      .getPlaylists()
+      .then((result) => {
+        if (!active) return;
+        const unique = new Map<string, PlexPlaylist>();
+        for (const playlist of result) {
+          if (playlist.playlistType === "video") continue;
+          unique.set(playlist.ratingKey, playlist);
+        }
+        setPlaylists([...unique.values()]);
+        setStatus("ready");
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setError(cause instanceof Error ? cause.message : "Failed to load playlists");
+        setStatus("error");
+      });
+    return () => {
+      active = false;
+    };
+  }, [serverKey, reload]);
+
+  const message =
+    status === "idle"
+      ? "Select a Plex server to view playlists."
+      : status === "loading"
+        ? "Loading playlists…"
+        : status === "error"
+          ? `Couldn’t load your playlists${error ? `: ${error}` : "."}`
+          : playlists.length === 0
+            ? "No playlists found in this library."
+            : null;
+
+  return (
+    <div className="playlist-library" id="playlist-library">
+      <div className="playlist-filter-tabs" aria-label="Library views">
+        {libraryTabs.map(([view, label]) => (
+          <button
+            className={`playlist-filter-tab${view === "playlists" ? " is-active" : ""}`}
+            type="button"
+            key={view}
+            onClick={() => onView(view)}
+            aria-current={view === "playlists" ? "page" : undefined}
+          >
+            {label}
+          </button>
+        ))}
+        <div className="playlist-filter-spacer" />
+        <Icon className="playlist-sort-icon">
+          <path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4m0 16 3-3m-3 3-3-3" />
+        </Icon>
+        <span className="playlist-sort-label">Recently added</span>
+      </div>
+      <section className="playlist-library-section">
+        <h1 className="playlist-library-title">Your Playlists</h1>
+        {message && (
+          <div
+            className={`playlist-library-status${status === "error" ? " is-error" : ""}`}
+            aria-live="polite"
+          >
+            <span>{message}</span>
+            {status === "error" && (
+              <button
+                className="playlist-library-retry"
+                type="button"
+                onClick={() => setReload((value) => value + 1)}
+              >
+                Try again
+              </button>
+            )}
+          </div>
+        )}
+        <ul className="playlist-grid" id="playlist-grid">
+          {status === "ready" &&
+            playlists.map((playlist) => (
+              <MediaCard
+                item={playlist}
+                category
+                meta={playlistMeta(playlist)}
+                onPlaylist={() => onPlaylist(playlist)}
+                key={playlist.ratingKey}
+              />
+            ))}
+        </ul>
+      </section>
     </div>
   );
 }

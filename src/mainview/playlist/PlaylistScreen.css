@@ -1,4 +1,122 @@
-/* Playlist detail follows the playlist frames in pen/plex.pen. */
+/* Playlist library and detail screens follow the playlist frames in pen/plex.pen. */
+
+.playlist-library,
+.playlist-detail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+  padding-bottom: 28px;
+}
+
+.playlist-filter-tabs {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  gap: 8px;
+}
+
+.playlist-filter-tab {
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.playlist-filter-tab.is-active {
+  background: var(--text-primary);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.playlist-filter-tab:hover:not(.is-active) {
+  background: #30303a;
+  color: var(--text-primary);
+}
+
+.playlist-filter-spacer {
+  min-width: 0;
+  flex: 1;
+}
+
+.playlist-sort-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.playlist-sort-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.playlist-library-section {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.playlist-library-title {
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.playlist-grid {
+  display: grid;
+  list-style: none;
+  grid-template-columns: repeat(auto-fill, 150px);
+  align-content: start;
+  gap: 24px 12px;
+  min-width: 0;
+}
+
+.playlist-library-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--surface-2);
+  border-radius: 10px;
+  background: rgba(29, 29, 36, 0.42);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.playlist-library-status.is-error {
+  border-color: rgba(214, 103, 103, 0.45);
+  color: #f0a0a0;
+}
+
+.playlist-library-retry {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 15px;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.playlist-library-retry:hover {
+  background: #30303a;
+}
 
 .playlist-detail {
   gap: 20px;
