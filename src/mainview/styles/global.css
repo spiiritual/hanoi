@@ -1,3 +1,22 @@
+/* Bundled so typography is identical on Windows, macOS and Linux rather than
+   falling through to whatever the host happens to ship. Both faces are SIL
+   OFL; licences sit alongside the files in ../fonts/. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url("../fonts/InterVariable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("../fonts/JetBrainsMono-Bold.woff2") format("woff2");
+}
+
 /* Design tokens — mirror plex.pen variables exactly. */
 :root {
   --bg: #141419;
@@ -11,9 +30,15 @@
   --text-tertiary: #6e6e79;
   --success-bg: #1d2b1e;
   --success: #4ade80;
+  --copied-bg: #1c2a21;
+  --copied-border: #3a6b4a;
+  --copied-fg: #5fd48a;
+  /* plex.pen: font-body = Inter, --font-primary = JetBrains Mono. The system
+     stacks remain only as a safety net if a bundled file fails to load. */
   --font-body:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
-    Cantarell, "Helvetica Neue", sans-serif;
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Menlo", monospace;
 }
 
 * {

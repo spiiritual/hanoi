@@ -19,6 +19,10 @@ export default {
         "views/mainview/auth/OAuthScreen.css",
       "src/mainview/auth/ServerSelection.css":
         "views/mainview/auth/ServerSelection.css",
+      "src/mainview/fonts/InterVariable.woff2":
+        "views/mainview/fonts/InterVariable.woff2",
+      "src/mainview/fonts/JetBrainsMono-Bold.woff2":
+        "views/mainview/fonts/JetBrainsMono-Bold.woff2",
       "src/mainview/home/HomeContent.css":
         "views/mainview/home/HomeContent.css",
       "src/mainview/home/HomeScreen.css": "views/mainview/home/HomeScreen.css",

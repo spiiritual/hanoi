@@ -3,6 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { plex } from "../plex.ts";
 import type { Account } from "../types.ts";
 import { AuthLayout, AuthSpacer } from "./auth-layout.tsx";
+import { authErrorMessage } from "./utils.ts";
+
+/** How long the copy button holds its "Copied!" confirmation. */
+const COPIED_FEEDBACK_MS = 2000;
 
 const stopPolling = (pollRef: { current: number | null }): void => {
   if (pollRef.current !== null) {
@@ -25,6 +29,17 @@ export const OAuthScreen = ({
   const [status, setStatus] = useState("Waiting for authorization…");
   const runRef = useRef(0);
   const pollRef = useRef<number | null>(null);
+  // The authorization session must outlive the parent's re-renders. AuthFlow
+  // rebuilds its stage callbacks every render (the stage transition timer
+  // alone forces one mid-flight), so depending on `onApproved` here would
+  // restart the effect, drop the poll timer, clear `urlRef`, and issue a
+  // second beginAuth that the main process rejects as already in progress.
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
+  const onApprovedRef = useRef(onApproved);
+  useEffect(() => {
+    onApprovedRef.current = onApproved;
+  });
   useEffect(() => {
     let cancelled = false;
     if (active) {
@@ -41,8 +56,9 @@ export const OAuthScreen = ({
           if (cancelled || run !== runRef.current) {
             return;
           }
-          if (state.authError !== null && state.authError !== "") {
-            setStatus(`Something went wrong: ${state.authError}`);
+          const authError = authErrorMessage(state.authError);
+          if (authError !== null) {
+            setStatus(`Something went wrong: ${authError}`);
             return;
           }
           if (!state.authenticated || state.authenticating) {
@@ -62,7 +78,7 @@ export const OAuthScreen = ({
             }
           }
           if (!cancelled && run === runRef.current) {
-            onApproved(account);
+            onApprovedRef.current(account);
           }
         } catch (error) {
           if (!cancelled) {
@@ -97,7 +113,41 @@ export const OAuthScreen = ({
       cancelled = true;
       stopPolling(pollRef);
     };
-  }, [active, onApproved]);
+  }, [active]);
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current !== null) {
+        window.clearTimeout(copiedTimer.current);
+      }
+    },
+    []
+  );
+
+  const copyLink = (): void => {
+    const url = urlRef.current;
+    if (url === null || url === "") {
+      return;
+    }
+    void (async () => {
+      try {
+        await plex.clipboardWriteText(url);
+      } catch (error) {
+        // Leave the button in its resting state: claiming a copy that did not
+        // happen is worse than showing nothing.
+        console.error("Failed to copy the Plex authorization link:", error);
+        return;
+      }
+      setCopied(true);
+      if (copiedTimer.current !== null) {
+        window.clearTimeout(copiedTimer.current);
+      }
+      copiedTimer.current = window.setTimeout(() => {
+        setCopied(false);
+        copiedTimer.current = null;
+      }, COPIED_FEEDBACK_MS);
+    })();
+  };
 
   return (
     <AuthLayout>
@@ -126,15 +176,20 @@ export const OAuthScreen = ({
             <span className="open-icon">↗</span>Open in Browser
           </button>
           <button
-            className="btn-copy"
+            className={copied ? "btn-copy is-copied" : "btn-copy"}
             type="button"
-            onClick={() => {
-              if (urlRef.current !== null && urlRef.current !== "") {
-                void plex.clipboardWriteText(urlRef.current);
-              }
-            }}
+            onClick={copyLink}
           >
-            Copy link
+            {copied ? (
+              <>
+                <span aria-hidden="true" className="copy-icon">
+                  ✓
+                </span>
+                Copied!
+              </>
+            ) : (
+              "Copy link"
+            )}
           </button>
         </div>
       </div>

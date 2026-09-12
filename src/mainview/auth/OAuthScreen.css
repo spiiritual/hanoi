@@ -30,7 +30,8 @@
   font-size: 22px;
   font-weight: 600;
   color: var(--text-tertiary);
-  font-family: "SF Mono", "Menlo", monospace;
+  /* plex.pen "Link prefix" is Inter 600, not the monospace face. */
+  font-family: var(--font-body);
 }
 
 .code-value {
@@ -38,7 +39,7 @@
   font-weight: 700;
   color: var(--accent);
   letter-spacing: 2px;
-  font-family: "SF Mono", "Menlo", monospace;
+  font-family: var(--font-mono);
   user-select: all;
 }
 
@@ -77,6 +78,22 @@
 }
 .btn-copy:hover {
   filter: brightness(1.1);
+}
+
+/* Confirmation state after the link reaches the clipboard.
+   Mirrors "Auth - Plex OAuth Link — Copied" in plex.pen: the button keeps its
+   40px box and 18px padding, so the 1px stroke sits inside the border box. */
+.btn-copy.is-copied {
+  background: var(--copied-bg);
+  color: var(--copied-fg);
+  border: 1px solid var(--copied-border);
+}
+.btn-copy.is-copied:hover {
+  filter: none;
+}
+
+.copy-icon {
+  font-size: 12px;
 }
 
 .open-icon {
