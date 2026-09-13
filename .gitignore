@@ -7,3 +7,6 @@ artifacts/
 *.tsbuildinfo
 .DS_Store
 /pen/plex.pen
+
+# gpui rewrite
+hanoi-gpui/target/
