@@ -19,12 +19,17 @@ mod auth;
 mod config;
 mod http;
 mod hubs;
+mod library;
 mod servers;
 
 pub use account::{get_account, get_avatar_bytes};
 pub use auth::{auth_url, create_pin, poll_pin};
 #[allow(unused_imports, reason = "backend contract the UI does not call yet")]
 pub use hubs::{Hub, HubItem, Section, get_home_hub_items, get_home_hubs, get_music_sections};
+#[allow(unused_imports, reason = "backend contract the UI does not call yet")]
+pub use library::{
+    Album, AlbumDetail, RECENTLY_ADDED_SORT, Track, get_album, get_albums, get_library_albums,
+};
 // `config_path` and `check_server_status` are part of the contract above but
 // are currently only called from inside this module, so the binary's
 // unused-import pass sees the re-export itself as unused. Drop the attributes

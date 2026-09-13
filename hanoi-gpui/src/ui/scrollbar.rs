@@ -235,8 +235,8 @@ fn viewport(handle: &ScrollHandle, axis: Axis) -> Pixels {
 fn max_offset(handle: &ScrollHandle, axis: Axis) -> Pixels {
     let max = handle.max_offset();
     match axis {
-        Axis::Horizontal => max.width,
-        Axis::Vertical => max.height,
+        Axis::Horizontal => max.x,
+        Axis::Vertical => max.y,
     }
 }
 

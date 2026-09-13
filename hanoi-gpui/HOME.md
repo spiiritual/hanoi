@@ -27,12 +27,16 @@ empty / retry states, the server switcher in the sidebar, and the artwork
 cache.
 
 **Out (keep the placeholders the React app already shows for them):** search
-results and text entry, the Albums / Artists / Songs / Playlists library
-screens, every detail screen, and the player bar. Selecting one of those
+results and text entry, the Artists / Songs / Playlists library screens, the
+artist and playlist detail screens, and the player bar. Selecting one of those
 views renders `.home-shell-placeholder` with the copy from `shellViewCopy`
 in `home-screen.tsx`, exactly as the React app does before those slices land.
 Track cards still render their hover play button (visual parity) but clicking
 it does nothing until the player is ported.
+
+The Albums view, the album detail screen, opening an album from any album
+card and the topbar's Back / Forward have landed since; `ALBUM.md` is their
+spec.
 
 ## Backend contract
 
@@ -190,9 +194,12 @@ tiles 3x3, so ~9 covers share a slab — and the covers that share one are the
 ones that were loaded together, which is to say the ones on the same screen.
 Evicting one frame here and one there therefore reclaims nothing: it leaves every
 slab half full. So each slot is tagged with the `Surface` it was last needed on
-(the Home dashboard, one "See all" category identified by its hub, or a library
-view; album / artist / playlist screens add a variant each), stamped by every
-`insert` and `touch`. `ArtworkState` keeps the **current and previous** surfaces
+(the Home dashboard, one "See all" category identified by its hub, a library
+view — the Albums grid carries frames, the placeholders none — or one album's
+detail screen identified by its rating key; artist and playlist screens will add
+a variant each), stamped by every `insert` and `touch`. See `ALBUM.md`,
+"Artwork", for the album cover's own variant and the grid -> album -> Back
+cohorts. `ArtworkState` keeps the **current and previous** surfaces
 warm — back and forward make a rapid return likely — and releases every older
 cohort at once. The byte budget stays **global**: warmth is a policy about which
 frames occupy the 64 MB, never a licence to exceed it, so a warm previous screen
@@ -336,8 +343,8 @@ scratch. "Add a server…" returns to the auth flow's server-selection stage.
 ### Topbar
 
 `.home-topbar`: 64px tall, 28px side padding, 16px gaps. Back and forward
-icon buttons (both disabled — there is no navigation stack yet), the 280px
-search pill (magnifier icon + "Search songs, albums, artists" placeholder,
+icon buttons (enabled only while there is an album to go back from or forward
+to — see `ALBUM.md`, "Topbar"; disabled otherwise), the 280px search pill (magnifier icon + "Search songs, albums, artists" placeholder,
 `cursor: text`) rendered inert because text input is out of scope, a
 flexible spacer, then the disabled queue and notification buttons.
 
@@ -351,9 +358,16 @@ mask, so tint with `.text_color(..)`.
 
 ### States
 
-Straight from `HomeDashboard`:
+Straight from `HomeDashboard`, except loading:
 
-* loading -> `.home-state` "Loading your Plex home…"
+* loading -> no copy: the dashboard grows to fill `.home-content` and centres
+  the 28px loading spinner (`Loading Spinner` in `plex.pen`,
+  `components::loading_state`) where the reference says "Loading your Plex
+  home…". Every content area of the shell does the same while it loads. The
+  spinner only appears once the load has lasted **300ms**, fading in over
+  **150ms** (`components::delayed_loading_spinner`); it holds its place from
+  the first frame, so nothing moves when it shows, and a faster load never
+  shows it at all.
 * error -> `.home-state.is-error` "Couldn't load your Plex home: {message}"
   plus the "Try again" button, which re-runs the load
 * ready with no music rows -> `.home-empty` ("No music rows yet" / "Plex has
@@ -362,10 +376,12 @@ Straight from `HomeDashboard`:
 
 "See all" replaces the dashboard with `HomeCategory`: the hub title, then
 every item from `get_home_hub_items(hub.key)` as category cards — except for a
-`music.recent.played.` hub, whose preview items are used as-is. Its own
-loading ("Loading…") and error ("Couldn't load this category: {message}")
-states live in `.home-category-status`. Leaving Home (any sidebar nav) clears
-the category, exactly like `changeView`.
+`music.recent.played.` hub, whose preview items are used as-is. While it
+loads, the title stays and the centred spinner fills the space below it instead
+of the reference's "Loading…" banner. Its empty ("No items in this category.")
+and error ("Couldn't load this category: {message}") states live in
+`.home-category-status`. Leaving Home (any sidebar nav) clears the category,
+exactly like `changeView`.
 
 ### Load semantics
 
@@ -381,14 +397,17 @@ Extend `HANOI_PREVIEW` (no network, no config file) with:
 | value | state |
 | --- | --- |
 | `home` | the dashboard with sample rows: "Recently Played" (6 mixed items), "Recently Added" (6 albums), "Your Playlists" (3 playlists, so no "See all") |
-| `home-loading` | the loading state |
+| `home-loading` | the loading state: the centred spinner |
 | `home-error` | "Couldn't load your Plex home: fetch failed" plus Try again |
 | `home-empty` | the empty state |
 | `home-category` | the "See all" category view for "Recently Added" |
-| `home-library` | the Albums placeholder, so the sidebar's active state is visible |
+| `home-category-loading` | that category still loading: its title over the centred spinner |
+| `home-library` | the Artists placeholder, so the sidebar's active state is visible (Albums has its own stages in `ALBUM.md`) |
 | `home-scrollbar` | the `home` dashboard with every overlay scrollbar pinned visible (they are hover-revealed, and a screenshot cannot hover) |
 
-Sample cards have no artwork, so they exercise the fallback glyphs.
+Sample cards have no artwork, so they exercise the fallback glyphs. The
+`*-loading` stages only show their spinner once the capture delay is past its
+300ms delay and 150ms fade; the default 1.5s is.
 `HANOI_SCREENSHOT=/path.png` still captures and quits.
 
 ## Verification

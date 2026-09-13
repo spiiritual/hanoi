@@ -1,0 +1,7 @@
+# gpui-pre 0.3.4 is a Zed snapshot from around v1.19.2, so it builds with the
+# toolchain Zed pins for that release; older compilers reject it (e.g. 1.92
+# lacks the stabilised `slice::as_array`). Move this in step with gpui.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

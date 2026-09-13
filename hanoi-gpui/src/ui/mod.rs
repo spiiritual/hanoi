@@ -2,6 +2,7 @@
 //!
 //! See `DESIGN.md` for the measurements every screen is built from.
 
+mod album;
 mod auth;
 mod components;
 mod home;
@@ -17,8 +18,8 @@ use std::borrow::Cow;
 
 use anyhow::Result;
 use gpui::{
-    App, Application, AssetSource, Bounds, KeyBinding, Menu, MenuItem, SharedString,
-    SystemMenuType, TitlebarOptions, WindowBounds, WindowOptions, actions, prelude::*, px, size,
+    App, AssetSource, Bounds, KeyBinding, Menu, MenuItem, SharedString, SystemMenuType,
+    TitlebarOptions, WindowBounds, WindowOptions, actions, prelude::*, px, size,
 };
 
 use preview::Preview;
@@ -57,6 +58,13 @@ impl Assets {
     const QUEUE: &'static [u8] = include_bytes!("../../assets/icons/queue.svg");
     const BELL: &'static [u8] = include_bytes!("../../assets/icons/bell.svg");
     const PLAY: &'static [u8] = include_bytes!("../../assets/icons/play.svg");
+    const PLAY_SOLID: &'static [u8] = include_bytes!("../../assets/icons/play-solid.svg");
+    const SHUFFLE: &'static [u8] = include_bytes!("../../assets/icons/shuffle.svg");
+    const HEART: &'static [u8] = include_bytes!("../../assets/icons/heart.svg");
+    const MORE: &'static [u8] = include_bytes!("../../assets/icons/more.svg");
+    const SORT: &'static [u8] = include_bytes!("../../assets/icons/sort.svg");
+    const LOADER_TRACK: &'static [u8] = include_bytes!("../../assets/icons/loader-track.svg");
+    const LOADER_ARC: &'static [u8] = include_bytes!("../../assets/icons/loader-arc.svg");
 }
 
 impl AssetSource for Assets {
@@ -83,6 +91,13 @@ impl AssetSource for Assets {
             icons::QUEUE => Self::QUEUE,
             icons::BELL => Self::BELL,
             icons::PLAY => Self::PLAY,
+            icons::PLAY_SOLID => Self::PLAY_SOLID,
+            icons::SHUFFLE => Self::SHUFFLE,
+            icons::HEART => Self::HEART,
+            icons::MORE => Self::MORE,
+            icons::SORT => Self::SORT,
+            icons::LOADER_TRACK => Self::LOADER_TRACK,
+            icons::LOADER_ARC => Self::LOADER_ARC,
             _ => return Ok(None),
         };
         Ok(Some(Cow::Borrowed(bytes)))
@@ -108,13 +123,13 @@ pub fn run() {
     });
     let screenshot = std::env::var(SCREENSHOT_ENV).ok().filter(|p| !p.is_empty());
 
-    Application::new()
+    gpui_platform::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             theme::load_fonts(cx);
             install_menu(cx);
 
-            cx.on_window_closed(|cx| {
+            cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
                 }
@@ -160,5 +175,6 @@ fn install_menu(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("Quit Hanoi", Quit),
         ],
+        disabled: false,
     }]);
 }

@@ -64,7 +64,7 @@ pub fn capture(window: WindowHandle<Root>, path: String, cx: &mut App) {
             Err(error) => log::error!("failed to run screencapture: {error}"),
         }
 
-        cx.update(|cx| cx.quit()).ok();
+        cx.update(|cx| cx.quit());
     })
     .detach();
 }

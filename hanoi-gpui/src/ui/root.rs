@@ -18,6 +18,9 @@ use super::scrollbar::ScrollbarState;
 use super::theme::{BG, FONT_BODY, LINE_HEIGHT_NORMAL, TEXT_PRIMARY};
 use super::transition::{self, Direction, Role};
 
+/// `AlbumScreen.css`'s `@media (max-width: 1040px)` breakpoint.
+const COMPACT_MAX_WIDTH: f32 = 1040.;
+
 /// Which of the three top-level surfaces is on screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -86,6 +89,9 @@ pub struct Root {
     pub artwork: ArtworkState,
     /// The overlay scrollbars' drag state.
     pub scrollbar: ScrollbarState,
+    /// `@media (max-width: 1040px)` — refreshed from the window at the top of
+    /// every render pass, before the tree is built.
+    pub compact: bool,
 
     pub startup_task: Option<Task<()>>,
     pub oauth_task: Option<Task<()>>,
@@ -98,12 +104,17 @@ pub struct Root {
     pub sections_task: Option<Task<()>>,
     pub category_task: Option<Task<()>>,
     pub menu_task: Option<Task<()>>,
+    /// The Albums view's library load.
+    pub albums_task: Option<Task<()>>,
+    /// The album detail screen's load.
+    pub album_task: Option<Task<()>>,
 }
 
 impl Root {
     /// The live app: show the startup screen and check the saved session.
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut root = Self::empty(false);
+        root.home.albums.start = Self::read_start();
         root.start_startup_check(cx);
         root
     }
@@ -137,6 +148,7 @@ impl Root {
             home: HomeState::default(),
             artwork: ArtworkState::default(),
             scrollbar: ScrollbarState::default(),
+            compact: false,
             startup_task: None,
             oauth_task: None,
             server_task: None,
@@ -148,6 +160,8 @@ impl Root {
             sections_task: None,
             category_task: None,
             menu_task: None,
+            albums_task: None,
+            album_task: None,
         }
     }
 
@@ -290,6 +304,7 @@ impl Render for Root {
         // Artwork loads are started before the tree is built so a render pass
         // never re-spawns one, and so `card::render` can stay a `&Root` read.
         // The scroll handles both of them measure are allocated first.
+        self.compact = window.viewport_size().width <= px(COMPACT_MAX_WIDTH);
         if self.screen == Screen::Home {
             self.ensure_scrollbars(window);
             self.ensure_artwork(window, cx);

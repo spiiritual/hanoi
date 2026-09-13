@@ -1,14 +1,15 @@
 //! `MediaCard` from `home-content.tsx` + the `.home-hub-card*` rules.
 //!
-//! The 150px column is the same in a row and in the category grid; only the
-//! meta line differs (`homeHubItemMeta` vs `homeCategoryItemMeta`).
+//! The 150px column is the same in a row, in the category grid and in the
+//! Albums grid; only the meta line differs (`homeHubItemMeta` vs
+//! `homeCategoryItemMeta`).
 
 use gpui::{
-    AnyElement, Div, FontWeight, ObjectFit, StyledImage as _, div, img, linear_color_stop,
-    linear_gradient, prelude::*, px, relative, svg,
+    AnyElement, Context, Div, ElementId, FontWeight, ObjectFit, StyledImage as _, div, img,
+    linear_color_stop, linear_gradient, prelude::*, px, relative, svg,
 };
 
-use crate::plex::HubItem;
+use crate::plex::{Album, HubItem};
 use crate::ui::components::{ellipsis, icons};
 use crate::ui::root::Root;
 use crate::ui::theme::{
@@ -38,7 +39,17 @@ const CARD_WIDTH: f32 = 140.;
 /// `.home-hub-card-art` — the square tile, `CARD_WIDTH` less the halo's room.
 const ART_SIZE: f32 = 130.;
 
-pub fn render(root: &Root, item: &HubItem, category: bool) -> AnyElement {
+/// One card. `id` names the card among its siblings; only an album card uses it, as the
+/// `.home-hub-card-album` button that opens the album (`MediaCard`'s
+/// `onAlbum`). Callers keep it unique per surface — a row index plus the
+/// card's position — since the same album can appear in two rows.
+pub fn render(
+    root: &Root,
+    item: &HubItem,
+    category: bool,
+    id: ElementId,
+    cx: &mut Context<Root>,
+) -> AnyElement {
     let interaction = home_hub_item_interaction(item);
     let meta = if category {
         home_category_item_meta(item)
@@ -46,7 +57,7 @@ pub fn render(root: &Root, item: &HubItem, category: bool) -> AnyElement {
         home_hub_item_meta(item)
     };
 
-    div()
+    let card = div()
         .group(GROUP)
         .relative()
         .w(px(CARD_WIDTH))
@@ -57,8 +68,9 @@ pub fn render(root: &Root, item: &HubItem, category: bool) -> AnyElement {
         .gap(px(10.))
         .text_color(TEXT_PRIMARY)
         .text_left()
-        // Both card kinds are `cursor: pointer` in the CSS. Opening a detail
-        // screen is out of scope, so the click itself does nothing yet.
+        // Every card kind is `cursor: pointer` in the CSS. Only an album card
+        // opens anything: artist and playlist screens are not ported, and a
+        // track card's play button waits for the player.
         .cursor_pointer()
         // `.home-hub-card::before` — the `surface-2` halo, faded in on hover.
         .child(
@@ -100,7 +112,20 @@ pub fn render(root: &Root, item: &HubItem, category: bool) -> AnyElement {
                         .text_color(TEXT_TERTIARY)
                         .line_height(relative(1.3)),
                 ),
-        )
+        );
+
+    // `canOpenAlbum`: `item.type === "album"` with an `onAlbum` handler, which
+    // every surface that renders cards passes.
+    if item.item_type != "album" {
+        return card.into_any_element();
+    }
+    // The card already knows the album's header and cover: it seeds the detail
+    // screen, which renders them while `getAlbum` is in flight.
+    let seed = Album::from_hub_item(item);
+    card.id(id)
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.open_album(seed.clone(), cx);
+        }))
         .into_any_element()
 }
 

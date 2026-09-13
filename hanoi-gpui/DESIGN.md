@@ -1,8 +1,9 @@
 # Hanoi auth flow - gpui rewrite spec
 
 This crate re-implements the Electrobun/React authentication flow from
-`../src/mainview/auth/*` natively in [gpui](https://gpui.rs) (crate `gpui`
-0.2.2 from crates.io). The goal is **pixel-for-pixel the same visuals and the
+`../src/mainview/auth/*` natively in [gpui](https://gpui.rs): a Zed snapshot
+from around v1.19.2, via the `gpui-pre` republish on crates.io, because the
+crates.io `gpui` stopped at 0.2.2 (see `Cargo.toml`). The goal is **pixel-for-pixel the same visuals and the
 same behaviour**. The React + CSS sources are the ground truth for anything
 this document leaves out:
 

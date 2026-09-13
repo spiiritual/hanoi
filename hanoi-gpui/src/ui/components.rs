@@ -1,12 +1,13 @@
 //! The pieces `AuthLayout.css`, `OAuthScreen.css` and `ConnectedScreen.css`
 //! share between screens: the logo, headings, the spinner, buttons and links.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, AnyView, App, ClickEvent, Context, Div, ElementId, FontWeight,
-    IntoElement, Render, SharedString, Stateful, Transformation, Window, div, percentage,
-    prelude::*, px, relative, svg,
+    Animation, AnimationElement, AnimationExt as _, AnyView, App, ClickEvent, Context, Div,
+    ElementId, FontWeight, IntoElement, Render, SharedString, Stateful, Transformation, Window,
+    div, percentage, prelude::*, px, relative, svg,
 };
 
 use super::theme::{
@@ -38,6 +39,21 @@ pub mod icons {
     pub const BELL: &str = "icons/bell.svg";
     pub const PLAY: &str = "icons/play.svg";
 
+    // The album screens' icons, transcribed from the `<Icon>` children in
+    // `album-screen.tsx`. `PLAY_SOLID` is the play triangle with
+    // `stroke: none`, as `.album-detail-play svg` and `.album-track-play svg`
+    // draw it; `PLAY` keeps the card button's stroked outline.
+    pub const PLAY_SOLID: &str = "icons/play-solid.svg";
+    pub const SHUFFLE: &str = "icons/shuffle.svg";
+    pub const HEART: &str = "icons/heart.svg";
+    pub const MORE: &str = "icons/more.svg";
+    pub const SORT: &str = "icons/sort.svg";
+
+    // The content-area loading spinner (`Loading Spinner` in `plex.pen`): the
+    // same ring as `SPINNER_*`, drawn at 28px with a 3px stroke.
+    pub const LOADER_TRACK: &str = "icons/loader-track.svg";
+    pub const LOADER_ARC: &str = "icons/loader-arc.svg";
+
     /// Every bundled asset, in the order `Assets::list` reports them.
     pub const ALL: &[&str] = &[
         SPINNER_TRACK,
@@ -59,6 +75,13 @@ pub mod icons {
         QUEUE,
         BELL,
         PLAY,
+        PLAY_SOLID,
+        SHUFFLE,
+        HEART,
+        MORE,
+        SORT,
+        LOADER_TRACK,
+        LOADER_ARC,
     ];
 }
 
@@ -158,6 +181,93 @@ pub fn spinner(id: impl Into<ElementId>) -> Div {
                     |arc, delta| arc.with_transformation(Transformation::rotate(percentage(delta))),
                 ),
         )
+}
+
+/// `Loading Spinner` in `plex.pen` — a 28px ring whose accent quarter turns
+/// once a second, like [`spinner`]. The shell's content areas show this instead
+/// of a line of loading copy.
+pub fn loading_spinner(id: impl Into<ElementId>) -> Div {
+    const SIZE: f32 = 28.;
+
+    div()
+        .size(px(SIZE))
+        .flex_none()
+        .relative()
+        .child(
+            svg()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size(px(SIZE))
+                .path(icons::LOADER_TRACK)
+                .text_color(SPINNER_TRACK),
+        )
+        .child(
+            svg()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size(px(SIZE))
+                .path(icons::LOADER_ARC)
+                .text_color(ACCENT)
+                .with_animation(
+                    id,
+                    Animation::new(Duration::from_secs(1)).repeat(),
+                    |arc, delta| arc.with_transformation(Transformation::rotate(percentage(delta))),
+                ),
+        )
+}
+
+/// How long a content area stays loading before [`delayed_loading_spinner`]
+/// shows anything. Most loads settle sooner, and a spinner that blinks on and
+/// off for a few frames is itself the flash it is meant to cover.
+const SPINNER_DELAY: Duration = Duration::from_millis(300);
+/// How long the delayed spinner then takes to fade in.
+const SPINNER_FADE: Duration = Duration::from_millis(150);
+
+/// The opacity [`delayed_loading_spinner`] draws at, `progress` being how far
+/// through `SPINNER_DELAY + SPINNER_FADE` it is (`0..=1`): nothing for the
+/// delay, then a linear ramp to fully opaque.
+fn delayed_spinner_opacity(progress: f32) -> f32 {
+    let delay = SPINNER_DELAY.as_secs_f32() / (SPINNER_DELAY + SPINNER_FADE).as_secs_f32();
+    ((progress - delay) / (1. - delay)).clamp(0., 1.)
+}
+
+/// [`loading_spinner`], invisible for [`SPINNER_DELAY`] after it first appears
+/// and then faded in over [`SPINNER_FADE`] — what CSS would write as
+/// `animation: fade-in 150ms 300ms both`; the reference shows its loading copy
+/// at once. It takes its 28px from the first frame, so nothing moves when it
+/// shows.
+///
+/// A one-shot `with_animation` on the wrapper's opacity. Its start is element
+/// state keyed by the global element id: it holds the final value once done
+/// for as long as the spinner keeps rendering, and a spinner that was not
+/// rendered last frame (a new load, another screen) starts the delay over.
+/// The fade's id is derived from `id` but distinct from the rotation's.
+pub fn delayed_loading_spinner(id: impl Into<ElementId>) -> AnimationElement<Div> {
+    let id = id.into();
+    let fade = ElementId::NamedChild(Arc::new(id.clone()), "delay".into());
+    div().flex_none().child(loading_spinner(id)).with_animation(
+        fade,
+        Animation::new(SPINNER_DELAY + SPINNER_FADE).with_easing(delayed_spinner_opacity),
+        |spinner, opacity| spinner.opacity(opacity),
+    )
+}
+
+/// A content area that is still loading: it takes all the height its column
+/// has left and centres [`delayed_loading_spinner`] in it (`Loading state` in
+/// `plex.pen`). Every ancestor between it and `.home-content` must be a flex
+/// column that grows (`flex_1`) while it is shown, or there is no height to
+/// centre in.
+pub fn loading_state(id: impl Into<ElementId>) -> Div {
+    div()
+        .flex_1()
+        .min_h(px(120.))
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(delayed_loading_spinner(id))
 }
 
 /// `.status-row` — spinner plus `.status-text`.
@@ -337,5 +447,37 @@ impl Render for Tooltip {
             .text_color(TEXT_SECONDARY)
             .line_height(relative(LINE_HEIGHT_NORMAL))
             .child(self.text.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SPINNER_DELAY, SPINNER_FADE, delayed_spinner_opacity};
+
+    /// The opacity `elapsed` into the animation.
+    fn opacity_at(elapsed_ms: u64) -> f32 {
+        let total = (SPINNER_DELAY + SPINNER_FADE).as_millis() as f32;
+        delayed_spinner_opacity((elapsed_ms as f32 / total).min(1.))
+    }
+
+    #[test]
+    fn the_delayed_spinner_stays_invisible_for_the_delay() {
+        assert_eq!(SPINNER_DELAY.as_millis(), 300);
+        assert_eq!(opacity_at(0), 0.);
+        assert_eq!(opacity_at(120), 0.);
+        assert_eq!(opacity_at(299), 0.);
+    }
+
+    #[test]
+    fn the_delayed_spinner_then_fades_in_and_holds() {
+        assert_eq!(SPINNER_FADE.as_millis(), 150);
+        assert!((opacity_at(375) - 0.5).abs() < 1e-3, "{}", opacity_at(375));
+        assert!((opacity_at(450) - 1.).abs() < 1e-6);
+        // A finished one-shot animation keeps reporting its last value.
+        assert_eq!(delayed_spinner_opacity(1.), 1.);
+        assert_eq!(opacity_at(10_000), 1.);
+        // Out-of-range easing input never leaves `0..=1`.
+        assert_eq!(delayed_spinner_opacity(-0.5), 0.);
+        assert_eq!(delayed_spinner_opacity(1.5), 1.);
     }
 }

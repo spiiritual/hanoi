@@ -319,6 +319,7 @@ fn menu(root: &Root, cx: &mut Context<Root>) -> Div {
             offset: point(px(0.), px(12.)),
             blur_radius: px(30.),
             spread_radius: px(0.),
+            inset: false,
         }])
         .child(
             // `.sidebar-server-menu-title`

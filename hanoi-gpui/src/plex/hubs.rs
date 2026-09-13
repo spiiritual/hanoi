@@ -277,7 +277,7 @@ fn has_audio_playlist(hub: &Hub) -> bool {
 
 /// `PlexClient.request`: `Accept: application/json` + `X-Plex-Token`, a non-2xx
 /// status and a non-JSON content type both raising the reference's messages.
-fn request(server: &ServerConfig, path: &str) -> Result<Value> {
+pub(super) fn request(server: &ServerConfig, path: &str) -> Result<Value> {
     let base = server.url.trim_end_matches('/');
     let mut response = media_agent()
         .get(format!("{base}{path}"))
@@ -325,7 +325,7 @@ fn request_failed(path: &str, error: &ureq::Error) -> anyhow::Error {
 /// A malformed item is dropped with a log line instead of failing the request
 /// (`filterItems`); note that — as in the reference, where `hubSchema` embeds
 /// `hubItemSchema` — an invalid *item inside a hub* invalidates that whole hub.
-fn parse_container<W, T>(payload: &Value, key: &str, path: &str) -> Vec<T>
+pub(super) fn parse_container<W, T>(payload: &Value, key: &str, path: &str) -> Vec<T>
 where
     W: serde::de::DeserializeOwned + Into<T>,
 {
@@ -353,7 +353,7 @@ where
 
 /// A panicking request thread would be a bug; surface it as a failed load
 /// rather than unwinding the caller's scope.
-fn joined<T>(handle: thread::ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
+pub(super) fn joined<T>(handle: thread::ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
     handle
         .join()
         .unwrap_or_else(|_| Err(anyhow!("Plex request thread panicked")))
@@ -493,17 +493,23 @@ fn lenient_number<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f
     Ok(Option::<serde_json::Number>::deserialize(deserializer)?.and_then(|number| number.as_f64()))
 }
 
-fn lenient_u64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+pub(super) fn lenient_u64<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error> {
     // Rust saturates out-of-range float casts, so a nonsensical value clamps
     // instead of wrapping.
     Ok(lenient_number(deserializer)?.map(|value| value as u64))
 }
 
-fn lenient_u32<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
+pub(super) fn lenient_u32<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error> {
     Ok(lenient_number(deserializer)?.map(|value| value as u32))
 }
 
-fn lenient_i64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+pub(super) fn lenient_i64<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error> {
     Ok(lenient_number(deserializer)?.map(|value| value as i64))
 }
 

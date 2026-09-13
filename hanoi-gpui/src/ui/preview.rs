@@ -2,8 +2,12 @@
 //! screens can be screenshotted without a Plex account. Nothing here touches
 //! the network, the config file or the artwork cache.
 
-use crate::plex::{Account, Hub, HubItem, Section, ServerInfo};
+use gpui::Point;
 
+use crate::plex::{Account, Album, AlbumDetail, Hub, HubItem, Section, ServerInfo};
+
+use super::album;
+use super::album::state::{AlbumNavigation, DetailState};
 use super::auth::{Stage, oauth};
 use super::home::state::{Category, Load, Status, View};
 use super::root::{Root, Screen};
@@ -23,8 +27,18 @@ pub enum Preview {
     HomeError,
     HomeEmpty,
     HomeCategory,
+    HomeCategoryLoading,
     HomeLibrary,
     HomeScrollbar,
+    Albums,
+    AlbumsLoading,
+    AlbumsError,
+    AlbumsEmpty,
+    Album,
+    AlbumLoading,
+    AlbumLoadingBare,
+    AlbumError,
+    AlbumEmpty,
 }
 
 impl Preview {
@@ -45,8 +59,18 @@ impl Preview {
             "home-error" => Some(Self::HomeError),
             "home-empty" => Some(Self::HomeEmpty),
             "home-category" => Some(Self::HomeCategory),
+            "home-category-loading" => Some(Self::HomeCategoryLoading),
             "home-library" => Some(Self::HomeLibrary),
             "home-scrollbar" => Some(Self::HomeScrollbar),
+            "albums" => Some(Self::Albums),
+            "albums-loading" => Some(Self::AlbumsLoading),
+            "albums-error" => Some(Self::AlbumsError),
+            "albums-empty" => Some(Self::AlbumsEmpty),
+            "album" => Some(Self::Album),
+            "album-loading" => Some(Self::AlbumLoading),
+            "album-loading-bare" => Some(Self::AlbumLoadingBare),
+            "album-error" => Some(Self::AlbumError),
+            "album-empty" => Some(Self::AlbumEmpty),
             _ => None,
         }
     }
@@ -65,8 +89,18 @@ impl Preview {
         "home-error",
         "home-empty",
         "home-category",
+        "home-category-loading",
         "home-library",
         "home-scrollbar",
+        "albums",
+        "albums-loading",
+        "albums-error",
+        "albums-empty",
+        "album",
+        "album-loading",
+        "album-loading-bare",
+        "album-error",
+        "album-empty",
     ];
 
     /// Put `root` into the state this preview names.
@@ -127,9 +161,19 @@ impl Preview {
                     error: None,
                 });
             }
+            Self::HomeCategoryLoading => {
+                Self::Home.apply(root);
+                root.home.category = Some(Category {
+                    hub: recently_added(),
+                    items: Vec::new(),
+                    status: Status::Loading,
+                    error: None,
+                });
+            }
+            // Artists is still a placeholder; Albums has its own stages below.
             Self::HomeLibrary => {
                 Self::Home.apply(root);
-                root.home.view = View::Albums;
+                root.home.view = View::Artists;
                 root.home.sections = Load::preview(Status::Ready, sample_sections(), None);
             }
             // The overlay scrollbars are revealed by a hover, which a
@@ -138,8 +182,62 @@ impl Preview {
                 Self::Home.apply(root);
                 root.scrollbar.force_visible = true;
             }
+            Self::Albums => albums(root, Status::Ready, library_albums(), None),
+            Self::AlbumsLoading => albums(root, Status::Loading, Vec::new(), None),
+            Self::AlbumsError => albums(root, Status::Error, Vec::new(), Some("fetch failed")),
+            Self::AlbumsEmpty => albums(root, Status::Ready, Vec::new(), None),
+            Self::Album => open_album(
+                root,
+                Status::Ready,
+                Some(album::preview::sample_detail()),
+                None,
+            ),
+            Self::AlbumLoading => open_album(root, Status::Loading, None, None),
+            // The defensive path: a navigation with no seed has no header to
+            // draw, only the full-area spinner.
+            Self::AlbumLoadingBare => {
+                Self::AlbumLoading.apply(root);
+                if let Some(selected) = root.home.albums.selected.as_mut() {
+                    selected.seed = None;
+                }
+            }
+            Self::AlbumError => open_album(root, Status::Error, None, Some("fetch failed")),
+            Self::AlbumEmpty => open_album(
+                root,
+                Status::Ready,
+                Some(album::preview::sample_empty_detail()),
+                None,
+            ),
         }
     }
+}
+
+/// The Albums view with its library in `status`.
+fn albums(root: &mut Root, status: Status, items: Vec<HubItem>, error: Option<&str>) {
+    shell(root);
+    root.home.view = View::Albums;
+    root.home.sections = Load::preview(Status::Ready, sample_sections(), None);
+    root.home.albums.library = Load::preview(status, items, error);
+}
+
+/// An album detail screen opened from the Albums grid, its load in `status`.
+/// The navigation is seeded from the sample album's card, as a click would
+/// seed it.
+fn open_album(root: &mut Root, status: Status, detail: Option<AlbumDetail>, error: Option<&str>) {
+    albums(root, Status::Ready, library_albums(), None);
+    let rating_key = album::preview::SAMPLE_RATING_KEY.to_owned();
+    root.home.albums.selected = Some(AlbumNavigation {
+        rating_key: rating_key.clone(),
+        return_view: View::Albums,
+        return_offset: Point::default(),
+        seed: Some(Album::from_hub_item(&album::preview::sample_card())),
+    });
+    root.home.albums.detail = Some(DetailState {
+        rating_key,
+        status,
+        detail,
+        error: error.map(str::to_owned),
+    });
 }
 
 /// The shell chrome every `home-*` preview shares.
@@ -292,6 +390,18 @@ fn category_albums() -> Vec<HubItem> {
         ),
         album("album-20", "An Evening With Silk Sonic", "Silk Sonic"),
         album("album-21", "Black Origami", "Jlin"),
+    ]);
+    items
+}
+
+/// The Albums grid: enough albums to wrap onto a third row at 1200px.
+fn library_albums() -> Vec<HubItem> {
+    let mut items = category_albums();
+    items.extend([
+        album("album-22", "Punisher", "Phoebe Bridgers"),
+        album("album-23", "Carrie & Lowell", "Sufjan Stevens"),
+        album("album-24", "Titanic Rising", "Weyes Blood"),
+        album("album-25", "Blue Lines", "Massive Attack"),
     ]);
     items
 }

@@ -15,6 +15,7 @@ pub mod utils;
 
 use gpui::{AnyElement, Context, Div, FontWeight, div, prelude::*, px, relative};
 
+use super::album;
 use super::components::tracked_text;
 use super::root::Root;
 use super::scrollbar;
@@ -40,7 +41,7 @@ pub fn render(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                 .flex()
                 .flex_col()
                 .bg(BG)
-                .child(topbar::render())
+                .child(topbar::render(root, cx))
                 .child(content(root, cx)),
         )
         .into_any_element()
@@ -51,6 +52,9 @@ pub fn render(root: &Root, cx: &mut Context<Root>) -> AnyElement {
 fn content(root: &Root, cx: &mut Context<Root>) -> Div {
     let body = match root.home.view {
         View::Home => dashboard::render(root, cx),
+        // The album detail screen is shown under the Albums view too, exactly
+        // as `openDetail` switches `activeView` to `albums`.
+        View::Albums => album::render(root, cx),
         view => placeholder(root, view).into_any_element(),
     };
 

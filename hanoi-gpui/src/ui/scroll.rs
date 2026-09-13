@@ -88,8 +88,8 @@ pub fn scroll_by(handle: &ScrollHandle, axis: Axis, delta: Pixels) {
     let max = handle.max_offset();
     let mut offset = handle.offset();
     match axis {
-        Axis::Horizontal => offset.x = (offset.x + delta).clamp(-max.width, px(0.)),
-        Axis::Vertical => offset.y = (offset.y + delta).clamp(-max.height, px(0.)),
+        Axis::Horizontal => offset.x = (offset.x + delta).clamp(-max.x, px(0.)),
+        Axis::Vertical => offset.y = (offset.y + delta).clamp(-max.y, px(0.)),
     }
     handle.set_offset(offset);
 }

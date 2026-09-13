@@ -10,7 +10,14 @@ name = "hanoi"
 path = "src/main.rs"
 
 [dependencies]
-gpui = "0.2.2"
+# The crates.io `gpui` stopped at 0.2.2 (October 2025). `gpui-pre` republishes
+# snapshots of Zed's gpui crates (the family gpui-kit / gpui-component build
+# on); 0.3.4 is a Zed snapshot slightly past v1.19.2. The rename keeps
+# `use gpui::..` working. Pinned exactly: snapshots make no semver promises.
+# `gpui-unofficial` (Zed release tags) was tried first, but its 1.19.2 macOS
+# build script cannot find gpui's sources in a crates.io checkout.
+gpui = { package = "gpui-pre", version = "=0.3.4" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.4", features = ["font-kit"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,10 +1,12 @@
 //! `HomeDashboard` and `HomeCategory` from `home-content.tsx` + `HomeContent.css`.
 
 use gpui::{
-    AnyElement, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px, relative,
+    AnyElement, Context, Div, ElementId, FontWeight, SharedString, Stateful, div, prelude::*, px,
+    relative,
 };
 
 use crate::plex::Hub;
+use crate::ui::components::loading_state;
 use crate::ui::root::Root;
 use crate::ui::scrollbar;
 use crate::ui::theme::{
@@ -16,9 +18,7 @@ use super::card;
 use super::state::{Category, Status};
 use super::utils::{HOME_HUB_PREVIEW_SIZE, filter_music_home_hubs, should_show_home_hub_see_all};
 
-const LOADING: &str = "Loading your Plex home…";
 const ERROR_PREFIX: &str = "Couldn't load your Plex home";
-const CATEGORY_LOADING: &str = "Loading…";
 const CATEGORY_ERROR_PREFIX: &str = "Couldn't load this category";
 const CATEGORY_EMPTY: &str = "No items in this category.";
 const EMPTY_TITLE: &str = "No music rows yet";
@@ -30,7 +30,7 @@ const FALLBACK_CATEGORY_TITLE: &str = "Plex category";
 /// otherwise.
 pub fn render(root: &Root, cx: &mut Context<Root>) -> AnyElement {
     match root.home.category.as_ref() {
-        Some(category) => category_view(root, category).into_any_element(),
+        Some(category) => category_view(root, category, cx).into_any_element(),
         None => dashboard(root, cx).into_any_element(),
     }
 }
@@ -43,7 +43,11 @@ fn dashboard(root: &Root, cx: &mut Context<Root>) -> Div {
     let mut column = div().min_w_0().flex().flex_col().gap(px(24.)).pb(px(28.));
 
     match state.status {
-        Status::Loading => column = column.child(banner(LOADING, false)),
+        // No "Loading your Plex home…" copy: the dashboard grows to fill
+        // `.home-content` and centres the `Loading Spinner` from `plex.pen`.
+        Status::Loading => {
+            return column.flex_1().child(loading_state("home-loading"));
+        }
         Status::Error => {
             let message = match state.error.as_deref().filter(|error| !error.is_empty()) {
                 Some(error) => format!("{ERROR_PREFIX}: {error}"),
@@ -52,7 +56,7 @@ fn dashboard(root: &Root, cx: &mut Context<Root>) -> Div {
             // `align-self: flex-start`: gpui has no align-self, so a full-width
             // flex row keeps the pill at its content width.
             column = column
-                .child(banner(message, true))
+                .child(error_banner(message))
                 .child(div().flex().child(retry(cx)));
         }
         Status::Idle => {}
@@ -77,17 +81,18 @@ fn dashboard(root: &Root, cx: &mut Context<Root>) -> Div {
     )
 }
 
-/// `.home-state` and `.home-state.is-error`.
-fn banner(text: impl Into<SharedString>, error: bool) -> Div {
+/// `.home-state.is-error` — the only `.home-state` left now that loading
+/// shows the spinner instead.
+fn error_banner(text: impl Into<SharedString>) -> Div {
     div()
         .px(px(16.))
         .py(px(14.))
         .border_1()
-        .border_color(if error { ERROR_BORDER } else { SURFACE_2 })
+        .border_color(ERROR_BORDER)
         .rounded(px(10.))
         .bg(PANEL_BG)
         .text_size(px(13.))
-        .text_color(if error { ERROR } else { TEXT_SECONDARY })
+        .text_color(ERROR)
         .line_height(relative(LINE_HEIGHT_NORMAL))
         .child(text.into())
 }
@@ -232,7 +237,16 @@ fn row(root: &Root, index: usize, hub: &Hub, cx: &mut Context<Root>) -> Div {
                             hub.items
                                 .iter()
                                 .take(HOME_HUB_PREVIEW_SIZE)
-                                .map(|item| card::render(root, item, false)),
+                                .enumerate()
+                                .map(|(position, item)| {
+                                    // The same album can sit in two rows, so
+                                    // the row index is part of the id.
+                                    let id = ElementId::NamedInteger(
+                                        format!("home-hub-card-{index}").into(),
+                                        position as u64,
+                                    );
+                                    card::render(root, item, false, id, cx)
+                                }),
                         ),
                 )
                 // Drawn inside the 16px the strip already reserves for the
@@ -257,7 +271,7 @@ fn see_all(index: usize, hub: Hub, cx: &mut Context<Root>) -> Stateful<Div> {
 }
 
 /// `.home-category`
-fn category_view(root: &Root, category: &Category) -> Div {
+fn category_view(root: &Root, category: &Category, cx: &mut Context<Root>) -> Div {
     let hub = &category.hub;
     let title = if hub.title.is_empty() {
         if hub.hub_identifier.is_empty() {
@@ -269,13 +283,13 @@ fn category_view(root: &Root, category: &Category) -> Div {
         hub.title.clone()
     };
 
-    let status_message = match category.status {
-        Status::Loading => CATEGORY_LOADING.to_owned(),
-        Status::Error => match category.error.as_deref().filter(|error| !error.is_empty()) {
+    let status_message = if category.status == Status::Error {
+        match category.error.as_deref().filter(|error| !error.is_empty()) {
             Some(error) => format!("{CATEGORY_ERROR_PREFIX}: {error}"),
             None => format!("{CATEGORY_ERROR_PREFIX}."),
-        },
-        _ => CATEGORY_EMPTY.to_owned(),
+        }
+    } else {
+        CATEGORY_EMPTY.to_owned()
     };
     let hide_status = category.status == Status::Ready && !category.items.is_empty();
 
@@ -297,6 +311,14 @@ fn category_view(root: &Root, category: &Category) -> Div {
                     .child(title),
             ),
         );
+
+    // No "Loading…" copy: the column grows to fill `.home-content` and centres
+    // the `Loading Spinner` under the title, with no empty grid beneath it.
+    if category.status == Status::Loading {
+        return column
+            .flex_1()
+            .child(loading_state("home-category-loading"));
+    }
 
     if !hide_status {
         // `.home-category-status`
@@ -329,12 +351,15 @@ fn category_view(root: &Root, category: &Category) -> Div {
             .gap(px(12.))
             .min_w_0()
             .when(category.status == Status::Ready, |grid| {
-                grid.children(
-                    category
-                        .items
-                        .iter()
-                        .map(|item| card::render(root, item, true)),
-                )
+                grid.children(category.items.iter().enumerate().map(|(position, item)| {
+                    card::render(
+                        root,
+                        item,
+                        true,
+                        ("home-category-card", position).into(),
+                        cx,
+                    )
+                }))
             }),
     )
 }

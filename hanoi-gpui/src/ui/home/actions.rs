@@ -1,5 +1,6 @@
 //! The behaviour behind the shell: the loads `home-screen.tsx` kicks off, the
-//! sidebar's server switcher, "See all" and the per-card artwork tasks.
+//! sidebar's server switcher, "See all" and the per-card artwork tasks. The
+//! album screens' own loads and navigation live in `album/actions.rs`.
 //!
 //! Everything blocking runs on `cx.background_spawn`; every result is applied
 //! through `this.update(cx, ..)` + `cx.notify()` and is dropped unless the
@@ -7,7 +8,7 @@
 
 use std::sync::Arc;
 
-use gpui::{AsyncApp, Context, ScrollHandle, WeakEntity, Window, prelude::*, px};
+use gpui::{AsyncApp, Context, Point, ScrollHandle, WeakEntity, Window, prelude::*, px};
 
 use crate::artwork::{
     ArtworkKey, ArtworkStore, Credentials, FALLBACK_VARIANT, Namespace, Source, Variant,
@@ -40,6 +41,13 @@ const CARD_VARIANT: Variant = Variant::Transcoded {
     height: 280,
 };
 
+/// What `.album-detail-art` asks Plex for: the 200px tile at 2x, for the same
+/// reason as [`CARD_VARIANT`]. The compact 168px tile reuses it.
+const ALBUM_COVER_VARIANT: Variant = Variant::Transcoded {
+    width: 400,
+    height: 400,
+};
+
 /// What the viewport test could tell us this frame.
 enum Visible {
     /// The cards near the viewport, in render order.
@@ -65,8 +73,8 @@ impl Root {
     // Entering the shell
     // -----------------------------------------------------------------------
 
-    /// The config's server identity — the key both loads are generationed on.
-    fn home_server_key(&self) -> Option<String> {
+    /// The config's server identity — the key every load is generationed on.
+    pub(crate) fn home_server_key(&self) -> Option<String> {
         let server = self.config.as_ref()?.server.as_ref()?;
         server
             .client_identifier
@@ -95,6 +103,7 @@ impl Root {
         };
         self.home.view = View::Home;
         self.home.invalidate_category();
+        self.home.albums.clear_navigation();
         self.home.set_server(self.home_server_key());
         self.enter_artwork_surface();
         self.screen = Screen::Home;
@@ -104,6 +113,7 @@ impl Root {
         self.load_home_hubs(cx);
         self.load_music_sections(cx);
         self.refresh_servers(cx);
+        self.apply_start(cx);
     }
 
     /// Forget everything the previous session's shell was showing.
@@ -114,6 +124,8 @@ impl Root {
         self.sections_task = None;
         self.category_task = None;
         self.menu_task = None;
+        self.albums_task = None;
+        self.album_task = None;
     }
 
     // -----------------------------------------------------------------------
@@ -179,6 +191,11 @@ impl Root {
                 .await;
             this.update(cx, |this, cx| {
                 if this.home.sections.finish(&request, result) {
+                    // `AlbumLibrary`'s effect depends on the sections: a grid
+                    // that is already on show starts its load now.
+                    if this.home.album_library_showing() {
+                        this.load_albums(cx);
+                    }
                     cx.notify();
                 }
             })
@@ -199,33 +216,31 @@ impl Root {
     // Sidebar
     // -----------------------------------------------------------------------
 
-    /// `changeView` — leaving Home drops any open category.
+    /// `changeView` — clears every album navigation, and leaving Home drops
+    /// any open category. Entering Albums starts `AlbumLibrary`'s load.
+    ///
+    /// `.home-content` starts at the top: the browser keeps one `scrollTop`
+    /// across views (clamped to the new content), which this port only
+    /// reproduces for Back (see `ALBUM.md`, "Navigation").
     pub fn change_view(&mut self, view: View, cx: &mut Context<Self>) {
         self.home.change_view(view);
+        self.artwork.content_scroll.set_offset(Point::default());
         self.enter_artwork_surface();
+        if view == View::Albums {
+            self.load_albums(cx);
+        }
         cx.notify();
     }
 
-    /// The screen the shell is about to render, as an artwork cohort.
-    ///
-    /// Read from the state rather than from whatever navigation call is in
-    /// progress, because the two can disagree: `changeView("home")` with a
-    /// category open leaves the category on screen (the reference only clears
-    /// it when the view is *not* Home), and releasing the covers of a screen
-    /// that is still rendering would just re-decode them next frame.
+    /// The screen the shell is about to render, as an artwork cohort — see
+    /// [`super::state::HomeState::surface`].
     fn home_surface(&self) -> Surface {
-        if self.home.view != View::Home {
-            return Surface::view(self.home.view);
-        }
-        match self.home.category.as_ref() {
-            Some(category) => Surface::category(&category.hub),
-            None => Surface::Home,
-        }
+        self.home.surface()
     }
 
     /// Tell the slot map which screen it is serving, releasing whatever is now
-    /// two screens back.
-    fn enter_artwork_surface(&mut self) {
+    /// two screens back. Every navigation calls this, album screens included.
+    pub(crate) fn enter_artwork_surface(&mut self) {
         let surface = self.home_surface();
         let released = self.artwork.enter(surface);
         if released > 0 {
@@ -485,6 +500,41 @@ impl Root {
         })
     }
 
+    /// The key `.album-detail-art`'s cover is held under, while the album on
+    /// show has a thumb — from the clicked card's seed until the detail is
+    /// `ready`, then from the loaded album.
+    pub(crate) fn album_cover_key(&self) -> Option<ArtworkKey> {
+        let (path, variant) = self.album_cover_request()?;
+        Some(ArtworkKey {
+            namespace: self.artwork.namespace.clone()?,
+            source: Source::Server(path),
+            variant,
+        })
+    }
+
+    /// The same artwork at [`CARD_VARIANT`]: the frame the clicked card drew,
+    /// which `.album-detail-art` scales up while the 400px cover loads. The
+    /// card's surface is the previous one when the album opens, so its frame
+    /// is still in the slot map.
+    pub(crate) fn album_cover_placeholder_key(&self) -> Option<ArtworkKey> {
+        let (path, _) = self.album_cover_request()?;
+        Some(ArtworkKey {
+            namespace: self.artwork.namespace.clone()?,
+            source: Source::Server(path),
+            variant: CARD_VARIANT,
+        })
+    }
+
+    /// The album cover to load this frame: not viewport-gated, because
+    /// `AlbumArtwork` renders its `ArtworkImage` with `priority`.
+    fn album_cover_request(&self) -> Option<(String, Variant)> {
+        if self.home.view != View::Albums {
+            return None;
+        }
+        let path = self.home.albums.cover_path()?;
+        Some((path.to_owned(), ALBUM_COVER_VARIANT))
+    }
+
     /// Start a load for every card that is near the viewport and does not have
     /// one yet, then prune what is no longer needed.
     ///
@@ -501,6 +551,7 @@ impl Root {
         if self.preview {
             return;
         }
+        let cover = self.album_cover_request();
         let paths = match self.visible_artwork_paths() {
             Visible::Paths(paths) => paths,
             // The strips have not been laid out yet (the view or its contents
@@ -510,16 +561,35 @@ impl Root {
                 window.request_animation_frame();
                 return;
             }
-            Visible::Nothing => return,
+            Visible::Nothing if cover.is_none() => return,
+            Visible::Nothing => Vec::new(),
         };
+        // The clicked card's frame stands in for the cover until it arrives
+        // (see `album_cover_placeholder_key`). It joins the album's cohort, so
+        // it outlives the card's own screen, but it is only ever reused: a
+        // placeholder that is not already here is not worth a load of its own.
+        if let Some(placeholder) = self
+            .album_cover_placeholder_key()
+            .filter(|key| self.artwork.contains(key))
+        {
+            self.artwork.touch(&placeholder);
+        }
         self.artwork.prune();
         log::debug!(
-            "artwork: {} cards near the viewport, {} frames held, {} loads in flight",
+            "artwork: {} cards near the viewport{}, {} frames held, {} loads in flight",
             paths.len(),
+            if cover.is_some() { " plus a cover" } else { "" },
             self.artwork.slot_len(),
             self.artwork.task_len()
         );
-        if paths.is_empty() {
+        // Every card at its card size, then the cover at its own: one loop,
+        // one fallback ladder.
+        let requests: Vec<(String, Variant)> = paths
+            .into_iter()
+            .map(|path| (path, CARD_VARIANT))
+            .chain(cover)
+            .collect();
+        if requests.is_empty() {
             return;
         }
         let Some(credentials) = self.artwork_credentials() else {
@@ -538,11 +608,11 @@ impl Root {
             return;
         };
 
-        for path in paths {
+        for (path, variant) in requests {
             let sized = ArtworkKey {
                 namespace: namespace.clone(),
-                source: Source::Server(path.clone()),
-                variant: CARD_VARIANT,
+                source: Source::Server(path),
+                variant,
             };
             if self.artwork.contains(&sized) {
                 // Still on screen, so it must outlive anything scrolled away.
@@ -612,7 +682,7 @@ impl Root {
     /// observer's intersection rectangle too, so it is skipped with no margin,
     /// exactly like the browser clips against every ancestor scroll container.
     fn visible_artwork_paths(&self) -> Visible {
-        if self.home.view != View::Home {
+        if !matches!(self.home.view, View::Home | View::Albums) {
             return Visible::Nothing;
         }
         let viewport = self.artwork.content_scroll.bounds();
@@ -625,24 +695,35 @@ impl Root {
 
         let mut paths = Vec::new();
         let hubs;
-        let strips: Vec<(&ScrollHandle, &[HubItem])> = match self.home.category.as_ref() {
-            Some(category) if category.status == Status::Ready => {
-                vec![(&self.artwork.category_scroll, category.items.as_slice())]
+        let library = &self.home.albums.library;
+        let strips: Vec<(&ScrollHandle, &[HubItem])> = if self.home.view == View::Albums {
+            // `.album-grid`: every album of the library, gated exactly like a
+            // category grid. The detail screen's cover is not gated at all
+            // (see `album_cover_request`), so an open album shows no cards.
+            if !self.home.album_library_showing() || library.status != Status::Ready {
+                return Visible::Nothing;
             }
-            Some(_) => return Visible::Nothing,
-            None if self.home.hubs.status == Status::Ready => {
-                hubs = filter_music_home_hubs(&self.home.hubs.items);
-                let mut strips = Vec::with_capacity(hubs.len());
-                for (index, hub) in hubs.iter().enumerate() {
-                    let Some(handle) = self.artwork.row_scroll(index) else {
-                        return Visible::NotLaidOut;
-                    };
-                    let take = hub.items.len().min(HOME_HUB_PREVIEW_SIZE);
-                    strips.push((handle, &hub.items[..take]));
+            vec![(&self.artwork.album_grid_scroll, library.items.as_slice())]
+        } else {
+            match self.home.category.as_ref() {
+                Some(category) if category.status == Status::Ready => {
+                    vec![(&self.artwork.category_scroll, category.items.as_slice())]
                 }
-                strips
+                Some(_) => return Visible::Nothing,
+                None if self.home.hubs.status == Status::Ready => {
+                    hubs = filter_music_home_hubs(&self.home.hubs.items);
+                    let mut strips = Vec::with_capacity(hubs.len());
+                    for (index, hub) in hubs.iter().enumerate() {
+                        let Some(handle) = self.artwork.row_scroll(index) else {
+                            return Visible::NotLaidOut;
+                        };
+                        let take = hub.items.len().min(HOME_HUB_PREVIEW_SIZE);
+                        strips.push((handle, &hub.items[..take]));
+                    }
+                    strips
+                }
+                None => return Visible::Nothing,
             }
-            None => return Visible::Nothing,
         };
 
         for (handle, items) in strips {
@@ -706,9 +787,9 @@ impl Root {
     }
 }
 
-/// One card's artwork: the card-sized transcode, then the larger transcoded
+/// One tile's artwork: the tile-sized transcode, then the larger transcoded
 /// fallback — the `attempt` ladder in `artwork-image.tsx`, with the primary
-/// request sized for the card (see `CARD_VARIANT`).
+/// request sized for the tile (`CARD_VARIANT` or `ALBUM_COVER_VARIANT`).
 async fn load_artwork(
     this: WeakEntity<Root>,
     cx: &mut AsyncApp,

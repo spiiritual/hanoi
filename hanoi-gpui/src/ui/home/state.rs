@@ -11,10 +11,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui::{RenderImage, ScrollHandle, SharedString, Task};
+use gpui::{Pixels, Point, RenderImage, ScrollHandle, SharedString, Task};
 
 use crate::artwork::{ArtworkKey, ArtworkStore, Namespace, frame_bytes};
-use crate::plex::{Hub, HubItem, Section};
+use crate::plex::{Album, Hub, HubItem, Section};
+use crate::ui::album::state::AlbumsState;
 
 /// `HomeStatus` / `MusicSectionsStatus`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -257,6 +258,9 @@ pub struct HomeState {
     pub category: Option<Category>,
     /// `categoryRun` — bumped whenever a category is opened or invalidated.
     pub category_run: usize,
+
+    /// The Albums view, the album detail screen and album navigation.
+    pub albums: AlbumsState,
 }
 
 impl Default for HomeState {
@@ -275,6 +279,7 @@ impl Default for HomeState {
             sections: Load::default(),
             category: None,
             category_run: 0,
+            albums: AlbumsState::default(),
         }
     }
 }
@@ -285,12 +290,74 @@ pub const FALLBACK_ACCOUNT_NAME: &str = "Plex account";
 pub const FALLBACK_SERVER_NAME: &str = "your server";
 
 impl HomeState {
-    /// `changeView`: leaving Home drops the category, exactly like the reference.
+    /// `changeView`: every album navigation is cleared, and leaving Home drops
+    /// the category, exactly like the reference.
     pub fn change_view(&mut self, view: View) {
+        self.albums.clear_navigation();
         if view != View::Home {
             self.invalidate_category();
         }
         self.view = view;
+    }
+
+    /// `openDetail("Album", item)`: remember the current view for Back, then
+    /// show the album `seed` describes under the Albums view. Returns whether
+    /// it opened.
+    ///
+    /// Deliberately not `change_view`: a category open on Home survives, so
+    /// Back lands on it again, exactly like the reference.
+    pub fn open_album(&mut self, seed: Album, offset: Point<Pixels>) -> bool {
+        if !self.albums.open(seed, self.view, offset) {
+            return false;
+        }
+        self.view = View::Albums;
+        true
+    }
+
+    /// `closeDetail`: back to the view the album was opened from. Returns the
+    /// `.home-content` offset to restore, or `None` when no album was open.
+    pub fn close_album(&mut self) -> Option<Point<Pixels>> {
+        let navigation = self.albums.close()?;
+        self.view = navigation.return_view;
+        Some(navigation.return_offset)
+    }
+
+    /// `reopenDetail`: the album Back left, under the Albums view again.
+    /// `offset` is where `.home-content` is now, for the next Back.
+    pub fn reopen_album(&mut self, offset: Point<Pixels>) -> bool {
+        if !self.albums.reopen(offset) {
+            return false;
+        }
+        self.view = View::Albums;
+        true
+    }
+
+    /// Whether `AlbumLibrary` is what `.home-content` renders.
+    pub fn album_library_showing(&self) -> bool {
+        self.view == View::Albums && self.albums.selected.is_none()
+    }
+
+    /// The screen the shell is about to render, as an artwork cohort.
+    ///
+    /// Read from the state rather than from whatever navigation call is in
+    /// progress, because the two can disagree: `changeView("home")` with a
+    /// category open leaves the category on screen (the reference only clears
+    /// it when the view is *not* Home), and releasing the covers of a screen
+    /// that is still rendering would just re-decode them next frame. Likewise
+    /// an album opened from a category leaves the category in place underneath.
+    pub fn surface(&self) -> Surface {
+        if self.view == View::Albums
+            && let Some(selected) = self.albums.selected.as_ref()
+        {
+            return Surface::Album(SharedString::from(selected.rating_key.clone()));
+        }
+        if self.view != View::Home {
+            return Surface::view(self.view);
+        }
+        match self.category.as_ref() {
+            Some(category) => Surface::category(&category.hub),
+            None => Surface::Home,
+        }
     }
 
     /// `categoryRun.current += 1` plus `patch({ category: null })`.
@@ -299,14 +366,17 @@ impl HomeState {
         self.category = None;
     }
 
-    /// Point both loads at `server`; returns whether anything changed.
+    /// Point every load at `server`; returns whether anything changed. A new
+    /// server also drops the category and every album navigation.
     pub fn set_server(&mut self, server: Option<String>) -> bool {
         let hubs = self.hubs.set_server(server.clone());
-        let sections = self.sections.set_server(server);
-        if hubs || sections {
+        let sections = self.sections.set_server(server.clone());
+        let albums = self.albums.set_server(server);
+        let changed = hubs || sections || albums;
+        if changed {
             self.invalidate_category();
         }
-        hubs || sections
+        changed
     }
 }
 
@@ -329,11 +399,12 @@ pub enum Slot {
 /// every slab half full and unreclaimable; dropping a screen's worth at once
 /// empties slabs.
 ///
-/// Today's surfaces are the dashboard, one "See all" category and the library
-/// placeholders (which show no artwork at all). An album, artist or playlist
-/// screen adds one variant each, carrying the rating key that keeps two of
-/// them apart exactly as [`Surface::Category`] carries its hub identifier;
-/// nothing else in the cohort machinery changes.
+/// The surfaces are the dashboard, one "See all" category, the library views
+/// (the Albums grid, and the placeholders that show no artwork at all) and one
+/// album detail screen. An album carries its rating key, which keeps two of
+/// them apart exactly as [`Surface::Category`] carries its hub identifier; an
+/// artist or playlist screen will add a variant each the same way, and nothing
+/// else in the cohort machinery changes (see `ALBUM.md`, "Artwork").
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Surface {
     /// The Home dashboard's hub rows.
@@ -342,10 +413,13 @@ pub enum Surface {
     /// The `HomeCategory` one "See all" opened, identified by the hub it
     /// expands so that switching between two categories is a real transition.
     Category(SharedString),
-    /// One of the sidebar's library views. They render placeholders, so no
-    /// frame is ever tagged with one; the variant is what makes leaving Home
-    /// for Albums a transition rather than a no-op.
+    /// One of the sidebar's library views. The Albums grid carries frames;
+    /// the other views still render placeholders, and their variant is what
+    /// makes leaving Home for one of them a transition rather than a no-op.
     Library(View),
+    /// One album's detail screen, identified by its rating key, so opening a
+    /// second album is a real transition.
+    Album(SharedString),
 }
 
 impl Surface {
@@ -451,6 +525,9 @@ pub struct ArtworkState {
     /// `.home-category-cards`; kept apart from the rows so a view switch can
     /// never read one surface's child bounds for the other's cards.
     pub category_scroll: ScrollHandle,
+    /// `.album-grid`, for the same reason: the Albums grid never scrolls
+    /// itself, but its handle is what gives the gate each card's bounds.
+    pub album_grid_scroll: ScrollHandle,
 }
 
 impl ArtworkState {
@@ -659,16 +736,24 @@ impl ArtworkState {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{RenderImage, Task};
+    use gpui::{Point, RenderImage, Task, point, px};
 
     use std::sync::Arc;
 
     use super::{
-        ArtworkState, Begin, HomeState, Load, MAX_SLOT_BYTES, MAX_SLOTS, NO_SERVER_ERROR, Slot,
-        Status, Surface, View, library_status_message,
+        ArtworkState, Begin, Category, HomeState, Load, MAX_SLOT_BYTES, MAX_SLOTS, NO_SERVER_ERROR,
+        Slot, Status, Surface, View, library_status_message,
     };
     use crate::artwork::{ArtworkKey, Namespace, Source, Variant};
-    use crate::plex::Hub;
+    use crate::plex::{Album, Hub};
+
+    /// The album a clicked card seeds `open_album` with.
+    fn album(rating_key: &str) -> Album {
+        Album {
+            rating_key: rating_key.to_owned(),
+            ..Album::default()
+        }
+    }
 
     fn key(index: usize) -> ArtworkKey {
         ArtworkKey {
@@ -810,6 +895,195 @@ mod tests {
         // Returning to Home must not bump the run again.
         state.change_view(View::Home);
         assert_eq!(state.category_run, 4);
+    }
+
+    #[test]
+    fn changing_view_clears_every_album_navigation() {
+        let mut state = HomeState::default();
+        assert!(state.open_album(album("album-1"), Point::default()));
+        state.albums.forward = state.albums.selected.clone();
+
+        state.change_view(View::Albums);
+        assert_eq!(state.view, View::Albums);
+        assert_eq!(state.albums.selected, None);
+        assert_eq!(state.albums.forward, None);
+        assert!(state.album_library_showing());
+    }
+
+    #[test]
+    fn opening_an_album_from_a_category_keeps_the_category_for_back() {
+        let mut state = HomeState {
+            category: Some(Category {
+                hub: hub("home.music.recent"),
+                items: Vec::new(),
+                status: Status::Ready,
+                error: None,
+            }),
+            ..HomeState::default()
+        };
+        let run = state.category_run;
+        let scrolled = point(px(0.), px(-360.));
+
+        assert!(state.open_album(album("album-1"), scrolled));
+        assert_eq!(state.view, View::Albums, "the album shows under Albums");
+        assert!(!state.album_library_showing(), "the detail, not the grid");
+        assert!(
+            state.category.is_some(),
+            "not `change_view`: the category survives"
+        );
+        assert_eq!(state.category_run, run);
+
+        assert_eq!(
+            state.close_album(),
+            Some(scrolled),
+            "Back restores the offset"
+        );
+        assert_eq!(state.view, View::Home);
+        assert!(state.category.is_some(), "and lands on the category again");
+        assert_eq!(
+            state.surface(),
+            Surface::category(&hub("home.music.recent"))
+        );
+    }
+
+    #[test]
+    fn forward_reopens_the_album_under_the_albums_view() {
+        let mut state = HomeState::default();
+        state.change_view(View::Albums);
+        assert!(!state.open_album(Album::default(), Point::default()));
+        assert!(state.open_album(album("album-1"), Point::default()));
+        assert_eq!(state.close_album(), Some(Point::default()));
+        assert_eq!(
+            state.view,
+            View::Albums,
+            "opened from the grid, so back to it"
+        );
+        assert!(state.album_library_showing());
+
+        let now = point(px(0.), px(-200.));
+        assert!(state.reopen_album(now));
+        assert_eq!(state.view, View::Albums);
+        assert_eq!(state.close_album(), Some(now));
+        assert_eq!(state.close_album(), None, "nothing is open any more");
+    }
+
+    #[test]
+    fn a_server_switch_clears_the_album_navigation() {
+        let mut state = HomeState::default();
+        state.set_server(Some("server-1".to_owned()));
+        assert!(state.open_album(album("album-1"), Point::default()));
+
+        assert!(state.set_server(Some("server-2".to_owned())));
+        assert_eq!(state.albums.selected, None);
+        assert_eq!(state.albums.forward, None);
+        assert_eq!(state.albums.library.status, Status::Idle);
+    }
+
+    #[test]
+    fn the_surface_follows_the_screen_on_show() {
+        let mut state = HomeState::default();
+        assert_eq!(state.surface(), Surface::Home);
+        state.change_view(View::Albums);
+        assert_eq!(state.surface(), Surface::Library(View::Albums));
+        assert!(state.open_album(album("album-1"), Point::default()));
+        assert_eq!(state.surface(), Surface::Album("album-1".into()));
+        assert!(state.open_album(album("album-2"), Point::default()));
+        assert_ne!(
+            state.surface(),
+            Surface::Album("album-1".into()),
+            "two albums are two surfaces"
+        );
+        state.change_view(View::Artists);
+        assert_eq!(state.surface(), Surface::Library(View::Artists));
+    }
+
+    #[test]
+    fn grid_to_album_and_back_keeps_both_screens_warm() {
+        let mut state = HomeState::default();
+        let mut artwork = ArtworkState::default();
+        artwork.insert(key(0), Slot::Loaded(frame()));
+
+        state.change_view(View::Albums);
+        artwork.enter(state.surface());
+        artwork.insert(key(1), Slot::Loaded(frame()));
+
+        assert!(state.open_album(album("album-1"), Point::default()));
+        assert_eq!(
+            artwork.enter(state.surface()),
+            1,
+            "the dashboard is two screens back once the album opens"
+        );
+        artwork.insert(key(2), Slot::Loaded(frame()));
+
+        state.close_album();
+        assert_eq!(
+            artwork.enter(state.surface()),
+            0,
+            "Back to the grid releases nothing"
+        );
+        assert!(
+            artwork.slot(&key(1)).is_some(),
+            "the grid's covers are still warm"
+        );
+        assert!(
+            artwork.slot(&key(2)).is_some(),
+            "and so is the album's, for Forward"
+        );
+
+        assert!(state.reopen_album(Point::default()));
+        assert_eq!(
+            artwork.enter(state.surface()),
+            0,
+            "Forward releases nothing either"
+        );
+        assert!(artwork.slot(&key(1)).is_some());
+        assert!(artwork.slot(&key(2)).is_some());
+    }
+
+    #[test]
+    fn a_third_screen_after_an_album_releases_the_oldest() {
+        let mut state = HomeState::default();
+        let mut artwork = ArtworkState::default();
+        state.change_view(View::Albums);
+        artwork.enter(state.surface());
+        artwork.insert(key(0), Slot::Loaded(frame()));
+
+        assert!(state.open_album(album("album-1"), Point::default()));
+        artwork.enter(state.surface());
+        artwork.insert(key(1), Slot::Loaded(frame()));
+        state.close_album();
+        artwork.enter(state.surface());
+
+        // Grid -> album -> grid -> Artists: the album is now two screens back.
+        state.change_view(View::Artists);
+        assert_eq!(artwork.enter(state.surface()), 1);
+        assert!(
+            artwork.slot(&key(0)).is_some(),
+            "the grid is the previous screen"
+        );
+        assert!(
+            artwork.slot(&key(1)).is_none(),
+            "the album's cover is released"
+        );
+        assert_eq!(artwork.take_droppable().len(), 1);
+
+        // Opening a second album from the grid ages out the first one too.
+        let mut state = HomeState::default();
+        let mut artwork = ArtworkState::default();
+        state.change_view(View::Albums);
+        artwork.enter(state.surface());
+        assert!(state.open_album(album("album-1"), Point::default()));
+        artwork.enter(state.surface());
+        artwork.insert(key(1), Slot::Loaded(frame()));
+        state.close_album();
+        artwork.enter(state.surface());
+        assert!(state.open_album(album("album-2"), Point::default()));
+        assert_eq!(
+            artwork.enter(state.surface()),
+            1,
+            "album-1 is two screens back"
+        );
+        assert!(artwork.slot(&key(1)).is_none());
     }
 
     #[test]
